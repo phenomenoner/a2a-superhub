@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "a2a-superhub"
+version = "0.1.0"
+description = "A small standalone hub for durable agent-to-agent task and artifact exchange."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "A2A Superhub contributors" }]
+keywords = ["agents", "a2a", "mcp", "artifact", "automation"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries :: Application Frameworks"
+]
+dependencies = []
+
+[project.scripts]
+a2a-superhub = "a2a_superhub.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

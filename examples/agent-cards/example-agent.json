@@ -1,0 +1,22 @@
+{
+  "schema": "a2a.agent-card.v1",
+  "id": "example.agent",
+  "name": "Example Agent",
+  "description": "A sample peer that can receive prompt tasks and exchange artifacts.",
+  "capabilities": {
+    "tasks": true,
+    "events": true,
+    "artifacts": true,
+    "cancellation": "best-effort"
+  },
+  "skills": [
+    {
+      "id": "agent.query",
+      "description": "Answer a bounded prompt and return a summary plus artifact refs when needed."
+    }
+  ],
+  "limits": {
+    "maxInlineBytes": 2048,
+    "maxArtifactBytes": 104857600
+  }
+}
