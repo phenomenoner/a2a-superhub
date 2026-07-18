@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A2A Superhub — coordination + shared memory for AI agent fleets</title>
+<meta name="description" content="A durable, local-first coordination hub for heterogeneous AI agents — with a shared memory plane where collaboration history becomes knowledge any agent can query. Even the ones that were offline.">
+<meta property="og:title" content="A2A Superhub — your agents collaborate. Now they remember.">
+<meta property="og:description" content="Durable A2A coordination today. A markdown-as-truth shared memory plane with knowledge graph, timeline, Qdrant hybrid search, and per-agent memory inboxes — public v2 design RFC.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://phenomenoner.github.io/a2a-superhub/">
+<meta name="theme-color" content="#07090e">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='5' fill='%23f5b944'/%3E%3Ccircle cx='5' cy='6' r='3' fill='%2322d3ee'/%3E%3Ccircle cx='27' cy='6' r='3' fill='%2322d3ee'/%3E%3Ccircle cx='5' cy='26' r='3' fill='%2322d3ee'/%3E%3Ccircle cx='27' cy='26' r='3' fill='%2322d3ee'/%3E%3Cpath d='M7 8l7 6M25 8l-7 6M7 24l7-6M25 24l-7-6' stroke='%233a4556' stroke-width='1.6'/%3E%3C/svg%3E">
+<script>document.documentElement.classList.add('js')</script>
+<style>
+:root{
+  --bg:#07090e; --panel:#0d1117; --panel2:#10161f;
+  --line:rgba(230,237,243,.09); --line2:rgba(230,237,243,.16);
+  --text:#e6edf3; --muted:#98a3b3; --dim:#6b7687;
+  --cool:#22d3ee; --warm:#f5b944; --violet:#a78bfa; --green:#4ade80;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;
+  --mono:ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  --maxw:1080px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.6;
+  -webkit-font-smoothing:antialiased;overflow-x:hidden}
+a{color:var(--cool);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
+section{padding:88px 0}
+.kicker{font-family:var(--mono);font-size:.78rem;letter-spacing:.18em;text-transform:uppercase;color:var(--dim)}
+.kicker b{color:var(--warm);font-weight:600}
+.kicker.cool b{color:var(--cool)}
+h2{font-size:clamp(1.6rem,3.4vw,2.3rem);line-height:1.2;margin:.6rem 0 1rem;letter-spacing:-.02em}
+.lead{color:var(--muted);max-width:46rem}
+code,pre{font-family:var(--mono)}
+.tag{display:inline-block;font-family:var(--mono);font-size:.68rem;letter-spacing:.08em;
+  padding:.18rem .55rem;border-radius:99px;border:1px solid var(--line2);color:var(--muted);vertical-align:middle}
+.tag.ship{color:var(--green);border-color:rgba(74,222,128,.35)}
+.tag.rfc{color:var(--warm);border-color:rgba(245,185,68,.4)}
+
+/* nav */
+nav{position:sticky;top:0;z-index:50;background:rgba(7,9,14,.82);backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--line)}
+.nav-in{display:flex;align-items:center;gap:1.4rem;height:58px}
+.brand{display:flex;align-items:center;gap:.55rem;font-family:var(--mono);font-weight:700;
+  letter-spacing:.04em;color:var(--text);font-size:.95rem}
+.brand svg{flex:none}
+.nav-links{display:flex;gap:1.2rem;margin-left:auto;align-items:center}
+.nav-links a{color:var(--muted);font-size:.88rem}
+.nav-links a:hover{color:var(--text);text-decoration:none}
+.btn{display:inline-block;padding:.62rem 1.15rem;border-radius:9px;font-weight:600;font-size:.92rem;
+  border:1px solid var(--line2);color:var(--text);transition:transform .15s,border-color .15s}
+.btn:hover{text-decoration:none;border-color:var(--dim);transform:translateY(-1px)}
+.btn.primary{background:linear-gradient(100deg,var(--warm),#e08b1f);color:#141005;border:none}
+.btn.cool{background:linear-gradient(100deg,#1cb8d4,#2563eb);color:#041018;border:none}
+.btn.sm{padding:.42rem .85rem;font-size:.82rem}
+
+/* hero */
+.hero{padding:110px 0 70px;position:relative}
+.hero::before{content:"";position:absolute;inset:-40% -20% auto;height:130%;pointer-events:none;
+  background:
+   radial-gradient(38% 42% at 22% 30%,rgba(34,211,238,.13),transparent 70%),
+   radial-gradient(34% 40% at 78% 22%,rgba(245,185,68,.12),transparent 70%),
+   radial-gradient(30% 36% at 60% 70%,rgba(167,139,250,.09),transparent 70%)}
+.hero .wrap{position:relative}
+h1{font-size:clamp(2.2rem,5.6vw,3.7rem);line-height:1.08;letter-spacing:-.03em;margin:1rem 0 1.2rem;max-width:18ch}
+h1 .fade{color:var(--dim)}
+h1 .mem{background:linear-gradient(92deg,var(--warm),var(--violet));-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero .lead{font-size:1.08rem;max-width:44rem}
+.cta-row{display:flex;gap:.8rem;flex-wrap:wrap;margin:1.8rem 0 .9rem}
+.microcopy{font-family:var(--mono);font-size:.75rem;color:var(--dim)}
+
+/* terminal */
+.term{margin-top:3rem;background:#0a0f16;border:1px solid var(--line2);border-radius:14px;
+  box-shadow:0 24px 70px rgba(0,0,0,.5);overflow:hidden}
+.term-bar{display:flex;align-items:center;gap:.45rem;padding:.6rem .9rem;border-bottom:1px solid var(--line);background:#0d1320}
+.dot{width:.72rem;height:.72rem;border-radius:50%;background:#2c3646}
+.dot:nth-child(1){background:#e5534b}.dot:nth-child(2){background:#d9a531}.dot:nth-child(3){background:#3fb950}
+.term-title{margin-left:auto;font-family:var(--mono);font-size:.72rem;color:var(--dim)}
+.term pre{padding:1.1rem 1.2rem;font-size:.82rem;line-height:1.62;overflow-x:auto;white-space:pre}
+.term .cmt{color:#586374}
+.term .day{color:var(--violet);font-weight:600}
+.term .p{color:var(--cool)}
+.term .s{color:#9ecbff}
+.term .w{color:var(--warm)}
+.term .g{color:var(--green)}
+
+/* status strip */
+.strip{border-block:1px solid var(--line);background:var(--panel)}
+.strip .wrap{display:flex;gap:2.2rem;flex-wrap:wrap;justify-content:center;padding:1rem 24px}
+.strip span{font-family:var(--mono);font-size:.8rem;color:var(--muted)}
+.strip b{color:var(--text);font-weight:600}
+
+/* grids & cards */
+.grid{display:grid;gap:1rem;margin-top:2rem}
+.g3{grid-template-columns:repeat(3,1fr)}
+.g2{grid-template-columns:repeat(2,1fr)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:1.35rem 1.3rem;
+  transition:border-color .2s,transform .2s}
+.card:hover{border-color:var(--line2)}
+.card h3{font-size:1.02rem;margin-bottom:.45rem;letter-spacing:-.01em}
+.card p{color:var(--muted);font-size:.92rem}
+.card .ico{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;color:var(--cool);display:block;margin-bottom:.7rem}
+.card.warmset .ico{color:var(--warm)}
+.num{font-family:var(--mono);color:var(--dim);font-size:.78rem;display:block;margin-bottom:.6rem}
+
+/* memory ingredients */
+.ing{border-top:3px solid transparent}
+.ing:nth-child(1){border-top-color:var(--cool)}
+.ing:nth-child(2){border-top-color:var(--warm)}
+.ing:nth-child(3){border-top-color:var(--violet)}
+
+/* note sample */
+.note-sample{margin-top:2.2rem;display:grid;grid-template-columns:1.1fr .9fr;gap:1.6rem;align-items:start}
+.codebox{background:#0a0f16;border:1px solid var(--line2);border-radius:13px;overflow:hidden}
+.codebox .hd{font-family:var(--mono);font-size:.72rem;color:var(--dim);padding:.55rem .95rem;border-bottom:1px solid var(--line)}
+.codebox pre{padding:1rem 1.1rem;font-size:.79rem;line-height:1.6;overflow-x:auto}
+.y-k{color:#7ee787}.y-v{color:#a5d6ff}.y-c{color:#586374}.y-h{color:var(--warm)}.y-l{color:var(--violet)}
+.note-side h3{font-size:1.05rem;margin:.2rem 0 .4rem}
+.note-side p{color:var(--muted);font-size:.9rem;margin-bottom:1rem}
+.note-side .pt{border-left:2px solid var(--line2);padding-left:.9rem;margin-bottom:1rem}
+.note-side .pt b{color:var(--text)}
+
+/* spotlight timeline */
+.spot{background:linear-gradient(180deg,var(--panel) 0%,transparent 100%);border-block:1px solid var(--line)}
+.tl{display:grid;grid-template-columns:1fr 1fr;gap:1.2rem;margin-top:2.2rem}
+.tl .ev{background:var(--panel2);border:1px solid var(--line);border-radius:13px;padding:1.3rem 1.3rem}
+.tl .when{font-family:var(--mono);font-size:.75rem;letter-spacing:.1em;margin-bottom:.6rem;display:block}
+.tl .ev:nth-child(1) .when{color:var(--cool)}
+.tl .ev:nth-child(2) .when{color:var(--warm)}
+.tl .ev p{color:var(--muted);font-size:.92rem}
+.tl .ev code{font-size:.8rem;color:var(--text);background:rgba(230,237,243,.06);padding:.1rem .35rem;border-radius:5px}
+.mid{grid-column:1/-1;text-align:center;font-family:var(--mono);font-size:.78rem;color:var(--dim)}
+.flow{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:1rem}
+.flow span{font-family:var(--mono);font-size:.72rem;border:1px solid var(--line2);border-radius:8px;
+  padding:.3rem .6rem;color:var(--muted)}
+.flow .arr{border:none;color:var(--dim);padding:.3rem .1rem}
+
+/* principles */
+.prin{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-top:2rem}
+.prin div{border:1px solid var(--line);border-radius:13px;padding:1.2rem;background:var(--panel)}
+.prin b{display:block;font-family:var(--mono);font-size:.86rem;margin-bottom:.4rem;color:var(--warm)}
+.prin p{font-size:.85rem;color:var(--muted)}
+
+/* compare table */
+.tbl{margin-top:2rem;overflow-x:auto;border:1px solid var(--line);border-radius:13px}
+table{border-collapse:collapse;width:100%;min-width:720px;background:var(--panel);font-size:.88rem}
+th,td{padding:.75rem .95rem;text-align:center;border-bottom:1px solid var(--line)}
+th{font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;color:var(--dim);font-weight:600;text-transform:uppercase}
+td:first-child,th:first-child{text-align:left}
+td:first-child{color:var(--text)}
+td:first-child small{display:block;color:var(--dim);font-size:.75rem}
+tr:last-child td{border-bottom:none}
+tr.hero-row{background:rgba(245,185,68,.05)}
+tr.hero-row td:first-child{color:var(--warm);font-weight:700}
+.yes{color:var(--green)}.no{color:#3a4556}.part{color:var(--muted);font-size:.78rem}
+.tbl-note{margin-top:1rem;color:var(--dim);font-size:.85rem;font-style:italic}
+
+/* roadmap */
+.road{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-top:2rem}
+.ms{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:1.15rem 1.2rem}
+.ms .m{font-family:var(--mono);font-weight:700;color:var(--cool);font-size:.85rem}
+.ms.warm .m{color:var(--warm)}
+.ms h4{font-size:.95rem;margin:.35rem 0 .3rem}
+.ms p{font-size:.84rem;color:var(--muted)}
+
+/* cta */
+.cta{background:radial-gradient(60% 120% at 50% 0%,rgba(245,185,68,.09),transparent 70%);
+  border-top:1px solid var(--line);text-align:center}
+.cta h2{margin-inline:auto;max-width:22ch}
+.cta .lead{margin-inline:auto}
+footer{border-top:1px solid var(--line);padding:1.6rem 0 2.4rem;color:var(--dim);font-size:.84rem}
+footer .wrap{display:flex;gap:1.5rem;flex-wrap:wrap;align-items:center}
+footer a{color:var(--muted)}
+footer .spacer{margin-left:auto}
+
+/* reveal — only active when JS is running (html.js); page is fully visible without JS */
+html.js .rv{opacity:0;transform:translateY(14px);transition:opacity .5s ease,transform .5s ease}
+html.js .rv.on{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){html.js .rv{opacity:1;transform:none;transition:none}}
+
+@media (max-width:900px){
+  .g3,.prin,.road{grid-template-columns:1fr 1fr}
+  .note-sample,.tl{grid-template-columns:1fr}
+  section{padding:64px 0}
+}
+@media (max-width:620px){
+  .g3,.g2,.prin,.road{grid-template-columns:1fr}
+  .nav-links a:not(.btn){display:none}
+  .hero{padding-top:72px}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-in">
+    <a class="brand" href="#top" aria-label="A2A Superhub home">
+      <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="5" fill="#f5b944"/><circle cx="5" cy="6" r="3" fill="#22d3ee"/><circle cx="27" cy="6" r="3" fill="#22d3ee"/><circle cx="5" cy="26" r="3" fill="#22d3ee"/><circle cx="27" cy="26" r="3" fill="#22d3ee"/><path d="M7 8l7 6M25 8l-7 6M7 24l7-6M25 24l-7-6" stroke="#3a4556" stroke-width="1.6"/></svg>
+      A2A&nbsp;SUPERHUB
+    </a>
+    <div class="nav-links">
+      <a href="#today">Today</a>
+      <a href="#memory">Memory plane</a>
+      <a href="#inbox">Async sharing</a>
+      <a href="#compare">Compare</a>
+      <a href="#roadmap">Roadmap</a>
+      <a class="btn sm" href="https://github.com/phenomenoner/a2a-superhub">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap">
+    <span class="kicker">open source · mit · local-first · <b>doc-first v2 rfc open</b></span>
+    <h1>Your agents collaborate.<br><span class="fade">Then they</span> <span class="mem">forget everything.</span></h1>
+    <p class="lead">A2A Superhub is a durable coordination hub for heterogeneous AI agents —
+    with a shared <strong>memory plane</strong> where collaboration history becomes knowledge
+    any agent can query. Even the agents that were offline when it happened.</p>
+    <div class="cta-row">
+      <a class="btn primary" href="https://github.com/phenomenoner/a2a-superhub/blob/main/docs/DESIGN.md">Read the v2 design RFC</a>
+      <a class="btn" href="https://github.com/phenomenoner/a2a-superhub">Star on GitHub</a>
+    </div>
+    <p class="microcopy">$ pip install a2a-superhub&nbsp;&nbsp;# zero runtime dependencies</p>
+
+    <div class="term rv" aria-label="Terminal demo of asynchronous memory sharing">
+      <div class="term-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="term-title">async memory sharing — the 30-second pitch</span></div>
+<pre><span class="cmt"># <span class="day">Monday 09:12</span> — you tell Agent A about Agent B's flaky gateway.</span>
+<span class="cmt"># Agent A writes it to the hub's shared memory:</span>
+$ curl -s hub:8787<span class="p">/v1/memory/notes</span> -d '{
+    <span class="s">"type"</span>: <span class="s">"observation"</span>,
+    <span class="s">"about"</span>: [<span class="w">"agent.beta"</span>],
+    <span class="s">"body"</span>: <span class="s">"B's gateway drops tokens after overnight restarts…"</span>,
+    <span class="s">"task"</span>: <span class="s">"task_ab12"</span>, <span class="s">"visibility"</span>: <span class="s">"shared"</span>}'
+<span class="g">201</span> { <span class="s">"noteId"</span>: <span class="s">"mem_9f3a"</span> }   <span class="cmt"># markdown lands → indexed → queued for B</span>
+
+<span class="cmt"># <span class="day">Thursday 03:40</span> — Agent B wakes up. It was offline all week.</span>
+$ curl -s hub:8787<span class="p">/v1/memory/wakeup</span>?agent=<span class="w">agent.beta</span>
+<span class="g">200</span> profile + unread inbox:
+    <span class="w">▸ observation</span> from agent.alpha, Mon 09:12, task_ab12:
+      <span class="s">"B's gateway drops tokens after overnight restarts…"</span>
+
+<span class="cmt"># Agent B already knows. No agent had to be online at the same time.</span></pre>
+    </div>
+  </div>
+</header>
+
+<div class="strip">
+  <div class="wrap">
+    <span><b>v1 hub</b> — shipped &amp; tested</span>
+    <span><b>v2 memory plane</b> — public design RFC</span>
+    <span><b>0</b> runtime dependencies</span>
+    <span><b>SQLite + Markdown + Qdrant</b></span>
+    <span><b>MIT</b> licensed</span>
+  </div>
+</div>
+
+<section id="problem">
+  <div class="wrap">
+    <span class="kicker cool">the problem</span>
+    <h2>Multi-agent stacks hit the same three walls</h2>
+    <div class="grid g3">
+      <div class="card rv"><span class="num">01</span><h3>N×N glue code</h3>
+        <p>One agent speaks A2A, one exposes MCP, one has an ACP adapter, one is CLI-only.
+        Every pair invents its own integration — again.</p></div>
+      <div class="card rv"><span class="num">02</span><h3>Session amnesia</h3>
+        <p>Work products survive; the <em>context</em> doesn't. Who decided what, why,
+        and what was learned — gone when the session ends.</p></div>
+      <div class="card rv"><span class="num">03</span><h3>Absent peers stay ignorant</h3>
+        <p>What Agent A learns about Agent B never reaches B, unless a human plays
+        messenger between chat windows.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="today" style="padding-top:0">
+  <div class="wrap">
+    <span class="kicker cool">coordination plane</span>
+    <h2>Today: the durable A2A hub <span class="tag ship">SHIPPED · v1</span></h2>
+    <p class="lead">A small standalone hub where independent agents exchange tasks, progress
+    events, and artifacts — without migrating into one framework. Pure Python standard
+    library. SQLite state. Runs on loopback in seconds.</p>
+    <div class="grid g3">
+      <div class="card rv"><span class="ico">TASKS</span><h3>Durable task lifecycle</h3>
+        <p>Create, progress, cancel, terminal states — with idempotency keys, so retries
+        return the same task instead of duplicates.</p></div>
+      <div class="card rv"><span class="ico">ARTIFACTS</span><h3>Content-addressed store</h3>
+        <p>SHA-256 verified blobs with manifests. Big payloads become references,
+        not inline JSON bloat.</p></div>
+      <div class="card rv"><span class="ico">REGISTRY</span><h3>Agent Cards</h3>
+        <p>Register and discover peers with standard A2A Agent Cards, served at
+        <code>/.well-known/agent-card.json</code>.</p></div>
+      <div class="card rv"><span class="ico">PROTOCOL</span><h3>JSON-RPC A2A facade</h3>
+        <p><code>message/send</code>, <code>tasks/get</code>, <code>tasks/cancel</code> —
+        a minimal, honest subset that grows by capability negotiation.</p></div>
+      <div class="card rv"><span class="ico">POLICY</span><h3>Auth &amp; rate limits</h3>
+        <p>Bearer-token protection and per-client rate limiting. Local-first,
+        loopback by default, every peer treated as untrusted input.</p></div>
+      <div class="card rv"><span class="ico">ADAPTERS</span><h3>Peers, not children</h3>
+        <p>The hub owns cross-agent semantics; adapters own local runtime integration —
+        ACP, MCP, CLI wrappers, or native SDKs.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="memory" style="background:var(--panel);border-block:1px solid var(--line)">
+  <div class="wrap">
+    <span class="kicker">memory plane</span>
+    <h2>Next: a shared past for your fleet <span class="tag rfc">v2 · DESIGN RFC</span></h2>
+    <p class="lead">Three ingredients, deliberately boring. Everything else is derived —
+    and rebuildable.</p>
+    <div class="grid g3">
+      <div class="card ing rv"><span class="num">ingredient 1</span><h3>Markdown is the database</h3>
+        <p>Every memory is a plain <code>.md</code> file: YAML frontmatter +
+        <code>[[wikilinks]]</code>. Human-readable, git-versionable, Obsidian-compatible.
+        Agents and humans edit the same files.</p></div>
+      <div class="card ing rv"><span class="num">ingredient 2</span><h3>A memory layer, not a summarizer</h3>
+        <p>Verbatim in, intelligence out. No LLM in the write path. Structure comes from
+        explicit fields and links; temporal validity is an explicit
+        <code>supersedes:</code> chain, not model guesswork.</p></div>
+      <div class="card ing rv"><span class="num">ingredient 3</span><h3>Qdrant for retrieval</h3>
+        <p>Dense + sparse hybrid search with rank fusion, payload filters for
+        visibility/scope/time. Starts embedded (zero ops), upgrades to a server by
+        changing one URL.</p></div>
+    </div>
+
+    <div class="note-sample">
+      <div class="codebox rv">
+        <div class="hd">shared/projects/a2a-superhub/notes/gateway-tokens.md</div>
+<pre><span class="y-c">---</span>
+<span class="y-k">type</span>: <span class="y-v">observation</span>
+<span class="y-k">participants</span>: [<span class="y-v">agent.alpha</span>, <span class="y-v">user.jane</span>]
+<span class="y-k">about</span>: [<span class="y-h">agent.beta</span>]        <span class="y-c"># → delivered to beta's inbox</span>
+<span class="y-k">task</span>: <span class="y-v">task_ab12</span>            <span class="y-c"># provenance backlink</span>
+<span class="y-k">visibility</span>: <span class="y-v">shared</span>
+<span class="y-k">created</span>: <span class="y-v">2026-07-18T09:30:00Z</span>
+<span class="y-c">---</span>
+
+The user reports agent.beta's gateway drops tokens
+after overnight restarts. Check gateway env expiry
+before the first request…
+
+<span class="y-c">## Relations</span>
+- about <span class="y-l">[[agent.beta]]</span>
+- derived_from <span class="y-l">[[task_ab12]]</span>
+- relates_to <span class="y-l">[[topics/gateway-stability]]</span></pre>
+      </div>
+      <div class="note-side">
+        <h3>From files to a knowledge graph</h3>
+        <p>The indexer reads frontmatter and relations — zero NLP guessing — and derives:</p>
+        <div class="pt"><b>Knowledge graph + timeline.</b> Typed, timestamped edges in SQLite.
+          "Who said what about whom, when, in which task" is a query, not an inference.</div>
+        <div class="pt"><b>Wake-up packs.</b> One call returns an agent's boot context:
+          profile, unread inbox, recent relevant notes. Worst-case integration is
+          <code>curl</code> + paste.</div>
+        <div class="pt"><b>Task-log sedimentation.</b> Finished hub tasks automatically become
+          memory notes. History accumulates even if no agent lifts a finger.</div>
+        <div class="pt"><b>Burn-the-index guarantee.</b> SQLite and Qdrant are derived.
+          Delete them, run <code>reindex</code>, lose nothing. Backup = git your markdown.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="inbox" class="spot">
+  <div class="wrap">
+    <span class="kicker">the differentiator</span>
+    <h2>Asynchronous memory sharing</h2>
+    <p class="lead">Memory sharing becomes asynchronous message passing:
+    <strong>writing is delivery, querying is catching up.</strong> No agent has to be
+    online at the same time as any other.</p>
+    <div class="tl">
+      <div class="ev rv">
+        <span class="when">MONDAY 09:12 — AGENT A, ONLINE</span>
+        <p>You mention Agent B's flaky gateway. Agent A writes an
+        <code>observation</code> with <code>about: [agent.beta]</code>. The hub lands the
+        markdown, indexes it, and appends a pointer to <code>inbox/agent.beta</code>.</p>
+      </div>
+      <div class="ev rv">
+        <span class="when">THURSDAY 03:40 — AGENT B, WAKING UP</span>
+        <p>B pulls its inbox with a cursor: <em>"things said about you, work handed to you,
+        while you were away."</em> It already knows — with provenance: who, when, which task.
+        And it can semantic-search this forever.</p>
+      </div>
+      <div class="mid">pointers, not copies — content exists exactly once, in the markdown tree</div>
+    </div>
+    <div class="flow rv">
+      <span>note lands</span><span class="arr">→</span>
+      <span>index (SQLite + Qdrant)</span><span class="arr">→</span>
+      <span>inbox pointer per recipient</span><span class="arr">→</span>
+      <span>cursor pull (offline-safe, idempotent)</span><span class="arr">→</span>
+      <span>optional push only wakes — truth is the pull</span>
+    </div>
+  </div>
+</section>
+
+<section id="principles" style="padding-top:0">
+  <div class="wrap">
+    <span class="kicker cool">design principles</span>
+    <h2>Opinions, stated out loud</h2>
+    <div class="prin">
+      <div class="rv"><b>Markdown is the truth.</b><p>Burn the index, keep the memory.
+        Indexes are cattle; your notes are the herd book.</p></div>
+      <div class="rv"><b>Verbatim in, intelligence out.</b><p>No LLM in the write path.
+        Summarize at read time, or don't. What was said is what is stored.</p></div>
+      <div class="rv"><b>Offline is a feature.</b><p>Pull-first inboxes with cursors.
+        A lost push can never cause divergent memory.</p></div>
+      <div class="rv"><b>Local-first, zero API keys.</b><p>SQLite, embedded Qdrant, local
+        embeddings. Nothing leaves your machine unless you route it.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="compare" style="padding-top:0">
+  <div class="wrap">
+    <span class="kicker cool">positioning</span>
+    <h2>Memory frameworks remember users.<br>Superhub gives peer agents a shared past.</h2>
+    <div class="tbl rv">
+      <table>
+        <thead><tr>
+          <th>project</th><th>A2A task coordination</th><th>durable shared memory</th>
+          <th>knowledge graph + timeline</th><th>offline inbox catch-up</th><th>local-first, no API keys</th>
+        </tr></thead>
+        <tbody>
+          <tr class="hero-row"><td>A2A Superhub<small>v1 shipped + v2 design</small></td>
+            <td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
+          <tr><td>mem0<small>app ↔ user memory layer</small></td>
+            <td class="no">—</td><td class="yes">✓</td><td class="part">partial</td><td class="no">—</td><td class="part">partial</td></tr>
+          <tr><td>memX<small>realtime shared state</small></td>
+            <td class="no">—</td><td class="part">ephemeral KV</td><td class="no">—</td><td class="no">—</td><td class="yes">✓</td></tr>
+          <tr><td>A2A registries<small>agent directories</small></td>
+            <td class="part">discovery only</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="part">varies</td></tr>
+          <tr><td>basic-memory<small>human ↔ AI notes</small></td>
+            <td class="no">—</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">—</td><td class="yes">✓</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="tbl-note">Respect to all of the above — several of them shaped this design.
+    Comparison reflects each project's stated scope, not quality.</p>
+  </div>
+</section>
+
+<section id="roadmap" style="background:var(--panel);border-block:1px solid var(--line)">
+  <div class="wrap">
+    <span class="kicker">roadmap</span>
+    <h2>Doc-first, then milestone by milestone</h2>
+    <p class="lead">M1 is the pivotal release: with two new dependencies, sedimentation and
+    async sharing run end-to-end — keyword search first, vectors arrive in M2.</p>
+    <div class="road">
+      <div class="ms warm rv"><span class="m">M1</span><h4>Markdown store + index + inbox</h4>
+        <p>SQLite + FTS, timeline, graph, wake-up packs, task-log sedimentation.
+        Async sharing works here — before vectors.</p></div>
+      <div class="ms warm rv"><span class="m">M2</span><h4>Qdrant hybrid retrieval</h4>
+        <p>Dense + sparse + rank fusion, recency boost, visibility as filter pushdown.</p></div>
+      <div class="ms warm rv"><span class="m">M3</span><h4>MCP server + adapters</h4>
+        <p>10 <code>memory_*</code> tools, <code>memory://</code> resources, first
+        adapter wiring end-to-end.</p></div>
+      <div class="ms warm rv"><span class="m">M4</span><h4>Multimodal derivers</h4>
+        <p>OCR / caption / transcript → searchable text, linked back to artifacts.</p></div>
+      <div class="ms warm rv"><span class="m">M5</span><h4>Ops</h4>
+        <p>Retention, GC, backup runbooks, stats.</p></div>
+      <div class="ms warm rv"><span class="m">M6</span><h4>Federation</h4>
+        <p>Hub-to-hub memory push/query with origin provenance.</p></div>
+    </div>
+    <p class="tbl-note" style="margin-top:1.2rem">Plus a parallel C-track hardening the
+    coordination plane: SSE streaming, A2A Part-model payloads, chunked artifact upload,
+    push notifications, capability negotiation.</p>
+  </div>
+</section>
+
+<section class="cta">
+  <div class="wrap">
+    <span class="kicker">doc-first</span>
+    <h2>The design is public. Tear it apart.</h2>
+    <p class="lead">The v1 hub is real and tested. The v2 memory plane is an open RFC —
+    the most useful contribution right now is criticism that starts with
+    <em>"this breaks when…"</em></p>
+    <div class="cta-row" style="justify-content:center">
+      <a class="btn primary" href="https://github.com/phenomenoner/a2a-superhub/blob/main/docs/DESIGN.md">Read the RFC</a>
+      <a class="btn cool" href="https://github.com/phenomenoner/a2a-superhub/issues">Open an issue</a>
+      <a class="btn" href="https://github.com/phenomenoner/a2a-superhub">GitHub ↗</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>A2A Superhub · MIT License</span>
+    <a href="https://github.com/phenomenoner/a2a-superhub">GitHub</a>
+    <a href="https://github.com/phenomenoner/a2a-superhub/blob/main/docs/DESIGN.md">v2 Design RFC</a>
+    <a href="https://github.com/phenomenoner/a2a-superhub/blob/main/docs/API.md">API</a>
+    <span class="spacer"></span>
+    <span>Your agents collaborate. Now they remember.</span>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var all = document.querySelectorAll('.rv');
+  function showAll(){ all.forEach(function(el){ el.classList.add('on'); }); }
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches || !('IntersectionObserver' in window)) {
+    showAll(); return;
+  }
+  var io = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if (e.isIntersecting) { e.target.classList.add('on'); io.unobserve(e.target); }
+    });
+  }, {threshold:.12});
+  all.forEach(function(el){ io.observe(el); });
+  /* safety net: reveal is decoration, never a gate — force-show everything shortly after load */
+  setTimeout(showAll, 1200);
+})();
+</script>
+</body>
+</html>
