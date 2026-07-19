@@ -1,0 +1,19 @@
+{
+  "valid": ["shared/gateway-note.md", "private/agent.alpha/profile.md", "unicode/台北.md"],
+  "invalid": [
+    {"path": "../escape.md", "reason": "parent escape"},
+    {"path": "shared/../../escape.md", "reason": "parent escape"},
+    {"path": "C:/absolute.md", "reason": "drive absolute"},
+    {"path": "/absolute.md", "reason": "root absolute"},
+    {"path": "shared/CON.md", "reason": "Windows reserved name"},
+    {"path": "shared/aux.txt", "reason": "Windows reserved name"},
+    {"path": "shared/trailing. ", "reason": "Windows trailing dot or space"}
+  ],
+  "collisionSets": [
+    {"paths": ["shared/Note.md", "shared/note.md"], "reason": "casefold collision"},
+    {"paths": ["shared/café.md", "shared/café.md"], "reason": "Unicode normalization collision"}
+  ],
+  "duplicateIds": [
+    {"id": "mem_99999999999999999999999999999999", "paths": ["shared/a.md", "shared/b.md"], "expected": "quarantine-both"}
+  ]
+}

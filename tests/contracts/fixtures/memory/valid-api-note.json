@@ -1,0 +1,17 @@
+{
+  "schema": "a2a-superhub.memory.note.v1",
+  "id": "mem_0123456789abcdef0123456789abcdef",
+  "type": "observation",
+  "title": "Gateway restart observation",
+  "author": "agent.alpha",
+  "visibility": "direct:agent.beta",
+  "recordedAt": "2026-07-19T10:00:00Z",
+  "occurredAt": "2026-07-19T09:58:00Z",
+  "source": {"kind": "api", "taskId": "task_demo_001"},
+  "project": "gateway",
+  "participants": ["agent.alpha", "agent.beta"],
+  "about": ["agent.beta"],
+  "tags": ["restart", "gateway"],
+  "relations": [{"type": "about", "target": "agent.beta"}],
+  "body": "Tokens were not restored after the controlled restart."
+}

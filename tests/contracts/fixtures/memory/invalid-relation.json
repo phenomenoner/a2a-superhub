@@ -1,0 +1,12 @@
+{
+  "schema": "a2a-superhub.memory.note.v1",
+  "id": "mem_55555555555555555555555555555555",
+  "type": "note",
+  "title": "Invalid relation vocabulary",
+  "author": "agent.alpha",
+  "visibility": "shared",
+  "recordedAt": "2026-07-19T10:06:00Z",
+  "source": {"kind": "api"},
+  "relations": [{"type": "made_up_relation", "target": "agent.beta"}],
+  "body": "Custom relations must use the x- namespace."
+}

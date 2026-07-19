@@ -1,0 +1,11 @@
+{
+  "schema": "a2a-superhub.retrieval-process-rss.v1",
+  "platform": "Windows 11",
+  "python": "3.12.5",
+  "model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+  "location": "qdrant-local",
+  "measurement": "PowerShell Get-Process PeakWorkingSet64 sampled at 200ms for the disposable spike process tree",
+  "peakWorkingSetBytes": 713781248,
+  "serverTriggerBytes": 2147483648,
+  "serverTriggerFired": false
+}

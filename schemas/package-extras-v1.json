@@ -1,0 +1,41 @@
+{
+  "contract": "a2a-superhub.package-extras.v1",
+  "productBaseline": "0.1.0",
+  "coreRuntimeDependencies": [],
+  "installationDoesNotEnableUnimplementedFeatures": true,
+  "extras": {
+    "memory-core": {
+      "dependencies": ["PyYAML==6.0.3", "watchdog==6.0.0"],
+      "purpose": "Lightweight YAML parsing and filesystem observation for durable memory and offline sharing.",
+      "runtimeImplemented": false
+    },
+    "search": {
+      "dependencies": ["qdrant-client[fastembed]==1.18.0"],
+      "purpose": "Opt-in FastEmbed multilingual hybrid retrieval with Qdrant local or server mode.",
+      "runtimeImplemented": true,
+      "embeddingModel": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+      "embeddingSource": "qdrant/paraphrase-multilingual-MiniLM-L12-v2-onnx-Q",
+      "embeddingRevision": "faf4aa4225822f3bc6376869cb1164e8e3feedd0",
+      "embeddingLicense": "apache-2.0",
+      "sparseModel": "Qdrant/bm25",
+      "sparseRevision": "e499a1f8d6bec960aab5533a0941bf914e70faf9"
+    },
+    "mcp": {
+      "dependencies": ["mcp==1.28.1"],
+      "purpose": "Official MCP SDK seam pinned to protocol 2025-11-25.",
+      "runtimeImplemented": false
+    },
+    "derive": {
+      "dependencies": [],
+      "purpose": "Stable install name for provider-owned deriver plugins.",
+      "runtimeImplemented": false,
+      "deferredDependencyContract": "Each future PDF, OCR, or transcription provider declares and tests its own media-specific dependency set; the current product selects none."
+    },
+    "memory": {
+      "dependencies": ["PyYAML==6.0.3", "watchdog==6.0.0", "qdrant-client[fastembed]==1.18.0", "mcp==1.28.1"],
+      "includes": ["memory-core", "search", "mcp", "derive"],
+      "purpose": "Umbrella installation seam for all currently declared optional dependency families.",
+      "runtimeImplemented": false
+    }
+  }
+}

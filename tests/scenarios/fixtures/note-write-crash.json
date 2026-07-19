@@ -1,0 +1,12 @@
+{
+  "id": "note-write-crash",
+  "pipeline": "note-write",
+  "initial": {"noteDurable": false, "jobDurable": false, "logicalResults": 0, "response": null},
+  "operations": [
+    {"op": "persist-note"},
+    {"op": "failpoint", "name": "after-atomic-rename-before-job"},
+    {"op": "recover"},
+    {"op": "retry", "key": "note:alpha:001", "requestHash": "sha256:same"}
+  ],
+  "expected": {"noteDurable": true, "jobDurable": true, "logicalResults": 1, "response": 201}
+}

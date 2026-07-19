@@ -1,9 +1,22 @@
 # A2A Superhub v2 — Shared Memory Plane (Design RFC)
 
-Status: **public design, request for comments** — nothing in this document is
-implemented yet unless it also appears in [API.md](API.md).
-Last updated: 2026-07-18
+Status: **🧱 Foundation (opt-in)** for durable memory, offline sharing, and
+hybrid retrieval — Markdown/ops/index, FTS5,
+inbox/wakeup, task-log sedimentation, the reference adapter, operator Skill,
+and Qdrant hybrid retrieval are implemented. **📐 Design RFC** covers future
+MCP and an A2A 1.0 runtime binding.
+Last updated: 2026-07-19
 Feedback: open a GitHub issue, ideally one that starts with *"this breaks when…"*.
+
+> **Contract and security amendment:** executable schemas and adopted decisions live
+> in [`../schemas/`](../schemas/), [CONTRACT_AND_SECURITY_DECISIONS.md](CONTRACT_AND_SECURITY_DECISIONS.md),
+> [MEMORY_API.md](MEMORY_API.md), and [MEMORY_SECURITY.md](MEMORY_SECURITY.md).
+> They correct this conceptual RFC where identity, truth stores, durability,
+> authorization, or protocol details differ. The implemented opt-in foundation includes the
+> Markdown/ops/derived-index foundation, FTS5, inbox/wakeup, task-log
+> sedimentation, the removable reference adapter, operator Skill, and hybrid
+> retrieval with keyword fallback. MCP
+> and an A2A 1.0 runtime binding remain future work.
 
 ## 1. Vision
 
@@ -28,7 +41,7 @@ for retrieval. No graph database. No LLM in the write path.
 flowchart TB
   subgraph ACCESS["Access plane"]
     HTTP["HTTP JSON API /v1/*"]
-    SSE["SSE / long-poll (C-track)"]
+    SSE["SSE / long-poll (coordination hardening track)"]
     MCP["MCP server (stdio)"]
     CLI["CLI"]
   end
@@ -332,41 +345,44 @@ Deliberate rejections:
   app↔user memory and extract facts with an LLM at write time — wrong scope
   axis (we need agent↔agent provenance) and wrong write path (we require
   verbatim).
-- **No graph database**: every planned query is a shallow JOIN. `kg_edges`
+- **No graph database**: every implemented graph query is a shallow
+  JOIN. `kg_edges`
   exports losslessly to any graph DB if that ever changes.
 - **No LLM in the write path**: cost, latency, and silent lossiness. LLM-assisted
   linking may appear later as an explicitly-labeled batch job.
 
-### Performance budget (single host, ~10⁴ notes)
+### Performance budgets and measured entry gate
 
 | Operation | Target |
 |---|---|
 | note write → 201 | < 50 ms (markdown lands, index async) |
 | index lag | < 1 s p95 (reported as `indexLagMs`) |
-| hybrid search | < 200 ms local mode / < 50 ms server |
+| hybrid search | entry-corpus warm p95 ≤ 750 ms; measured 80.32 ms local / 442.26 ms server on the fixed 17-note retrieval evaluation corpus; no 10k hybrid claim |
 | wakeup pack | < 300 ms |
 | timeline / graph | < 50 ms |
 
-Scale breakpoints, each independent: Qdrant → server at ~10⁵ points; SQLite →
+Scale triggers are measured independently: Qdrant moves to server mode when
+warm-query p95, build time, process RSS, or derived-index bytes exceed the
+published gate; no fixed point-count threshold is authoritative. SQLite →
 Postgres when multiple hub writers appear; stdlib HTTP → ASGI at >200
 concurrent connections.
 
 ## 11. Roadmap
 
-| Phase | Scope | Exit test (selection) |
+| Capability | Public status | Scope and evidence target |
 |---|---|---|
-| **M0** | Contracts: note schema v1, layout, scopes, API + MCP contract, extension URI | schemas validate; negative cases documented |
-| **M1** | md store + SQLite index + FTS + **inbox** + timeline/graph/wakeup + task-log sedimentation — *no vectors yet* | `md_is_truth` (delete index, rebuild, identical results); `inbox_offline_catchup`; `visibility_enforced`; `supersede_chain` |
-| **M2** | Qdrant hybrid retrieval + recency boost + payload filters | `hybrid_beats_fts_on_paraphrase`; `filter_pushdown_visibility`; mixed-language smoke |
-| **M3** | MCP server + first adapter wiring (e.g. an ACP-capable agent pulls wakeup/inbox at session start, writes handoffs at session end) | end-to-end demo of §7 |
-| **M4** | Multimodal derivers (reference: pdf→text, image→OCR) | search hits a caption, follows edge to the artifact |
-| **M5** | Retention/GC, backup runbooks, stats | — |
-| **M6** | Hub-to-hub federation (`memory.push` / `memory.query`) | — |
-| **C-track** | Coordination hardening: SSE streaming (`message/stream`, `tasks/resubscribe`), A2A Part-model payloads, raw + chunked artifact upload, push notification config, capability negotiation | interleaves with M-track |
+| **Contract and security baseline** | 🧱 Foundation | Versioned note, identity, authorization, API, protocol, package, and Skill contracts; schemas validate and negative cases fail closed. |
+| **Durable memory and offline sharing** | 🧱 Foundation (opt-in) | Markdown truth, SQLite operational/derived stores, FTS, inbox, timeline/graph, wakeup, and task-log sedimentation; restart/rebuild, visibility, cursor, and supersede scenarios pass. |
+| **Hybrid retrieval** | 🧱 Foundation (opt-in) | Qdrant dense+sparse retrieval, recency boost, authorization filters, local/server modes, and keyword fallback; fixed-corpus quality and interruption/recovery scenarios pass. |
+| **Agent protocol integration** | 📐 Design RFC | Stable MCP `memory_*` tools, an A2A 1.0 runtime binding, and a broader adapter matrix; requires an end-to-end standards interop demonstration. |
+| **Multimodal derivation** | 🗺 Planned | PDF text, OCR, captions, and transcripts become derived notes; search must resolve a derivation back to its source artifact. |
+| **Operational hardening** | 🗺 Planned | Retention, garbage collection, backup/restore runbooks, workload sizing, and long-running soak evidence. |
+| **Hub federation** | 🗺 Planned | Namespaced hub-to-hub memory exchange with explicit same-operator trust and isolation evidence. |
+| **Coordination hardening** | 🗺 Planned | SSE streaming, A2A Part-model payloads, chunked artifacts, push notifications, and capability negotiation. |
 
-M1 is the pivotal release: with only two new dependencies (PyYAML, watchdog) the
-core story — sedimentation + async sharing — runs end to end, using FTS keyword
-search until vectors arrive in M2.
+The implemented durable-memory and offline-sharing foundation adds only PyYAML
+and watchdog; hybrid retrieval remains a separate opt-in dependency family and
+retains keyword fallback when the vector provider is unavailable.
 
 ## 12. Prior art and references
 

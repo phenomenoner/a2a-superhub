@@ -13,8 +13,12 @@ Goal: every future update looks and reads like it was written by the same hand.
 2. **Commit only what you touched.** Parallel sessions often leave
    work-in-progress in the tree. Always `git add <explicit paths>` — never
    `git add -A` / `git add .`.
-3. **Run the public-hygiene scan before every commit** (§8). No internal
-   machine paths, no private project names, no personal handles in examples.
+3. **Run the public-hygiene and public-context gate before every commit** (§8).
+   Remove internal machine paths, private project names, personal handles,
+   planning codes, round names, and private checklist shorthand. Replace them
+   with concrete behavior, compatibility boundaries, user/developer impact,
+   measured verification, and honest remaining limits. A zero-hit scan is not
+   enough: read the resulting prose as a first-time public reader.
 4. **Never present unbuilt as built.** Every claim carries a status from the
    ladder in §4. When implementation and docs disagree, docs are wrong — fix
    the docs in the same change or don't ship the claim.
@@ -34,8 +38,8 @@ note, like the one at the top of `docs/DESIGN.md`).
 | Layer | Files | Role |
 |---|---|---|
 | 1 · Executable | `schemas/*.json`, `tests/`, `src/` | The contract as code. Never edited to match prose — prose matches them. |
-| 2 · Contract docs | `docs/M0_CONTRACT_DECISIONS.md`, `docs/MEMORY_API.md`, `docs/MEMORY_SECURITY.md`, `docs/A2A_COMPATIBILITY.md`, `docs/PACKAGING.md`, `docs/ext/` | Ratified, implementation-facing decisions. Status headers state exactly what is implemented vs absent. |
-| 3 · Evidence | `docs/M*_EVIDENCE.md` | Frozen per-milestone proof (baseline commit, scope, test results). Append new files; never rewrite old ones. |
+| 2 · Contract docs | `docs/CONTRACT_AND_SECURITY_DECISIONS.md`, `docs/MEMORY_API.md`, `docs/MEMORY_SECURITY.md`, `docs/A2A_COMPATIBILITY.md`, `docs/PACKAGING.md`, `docs/ext/` | Ratified, implementation-facing decisions. Status headers state exactly what is implemented vs absent. |
+| 3 · Evidence | `docs/*_EVIDENCE.md` | Feature-named proof with baseline commit, concrete scope, test results, and limits. Append new files; do not rewrite old measurements as current. |
 | 4 · Conceptual RFC | `docs/DESIGN.md` | The narrative design. Corrected by layers 1–3 via its amendment block. |
 | 5 · Marketing summary | `README.md` | Compressed pitch + status table + quickstart. Everything here must be defensible from layers 1–4. |
 | 6 · Product site | `docs/index.html` | The most compressed layer. Same claims as README, fewer words. |
@@ -46,13 +50,13 @@ between layers 2 and 5: factual, no marketing voice.
 
 ## 3. Status sync map — "X changed, update Y"
 
-When a milestone lands (or scope changes), update **all** of these in one
+When a capability lands (or scope changes), update **all** of these in one
 change, in this order:
 
 | # | Surface | Exact location |
 |---|---|---|
 | 1 | Contract doc status header | e.g. `docs/MEMORY_API.md` first paragraph — implemented vs absent list |
-| 2 | Evidence file | new `docs/M<x>_EVIDENCE.md` with baseline commit + scope |
+| 2 | Evidence file | new behavior-named `docs/*_EVIDENCE.md` with baseline commit, concrete scope, and verification limits |
 | 3 | `docs/DESIGN.md` | `Status:` line + amendment block at top |
 | 4 | `README.md` | badges (line ~9–12) · "Two planes" status table · memory-plane section heading + intro · Roadmap list |
 | 5 | `docs/index.html` | hero kicker (`.kicker`, "doc-first v2 rfc open") · status strip (`.strip`) · section tags (`.tag.ship` / `.tag.rfc`) · memory-plane `<h2>` label · roadmap cards (`.ms`) · terminal mock if the demoed API changed |
@@ -70,13 +74,14 @@ grep -rniE "rfc open|design rfc|not implemented|remain(s)? absent|planned|shippe
 | Label | Meaning | Visual |
 |---|---|---|
 | ✅ Shipped | Implemented, tested, on `main`, evidence file exists | green check / `.tag.ship` |
-| 🧱 Foundation (opt-in) | Implemented behind a flag/extra; scope stated precisely | amber, named milestone (e.g. "M1B, opt-in") |
+| 🧱 Foundation (opt-in) | Implemented behind a flag/extra; scope stated precisely | amber, named capability (e.g. "offline sharing, opt-in") |
 | 📐 Design RFC | Public design, not built | amber `.tag.rfc`, always links to `docs/DESIGN.md` |
 | 🗺 Planned | Named on roadmap only | plain text, no badge |
 
 Rules: a surface may compress wording but never promote a label upward.
-Scope creep in labels ("M1 done" when only M1A/B landed) is the #1 drift bug —
-name the sub-milestone.
+Scope creep in labels (for example, saying "memory complete" when only durable
+storage and offline inbox behavior exist) is the #1 drift bug — name the exact
+implemented capability and the absent surfaces.
 
 ## 5. Website design system (`docs/index.html`)
 
@@ -122,7 +127,7 @@ Gradients are always warm→violet (headline highlight) or cool→blue (buttons)
 | `.flow` | arrow-chip pipeline |
 | `.prin` | 4-up aphorism grid |
 | `.tbl` | comparison table (hero row = `.hero-row`) |
-| `.road` + `.ms` | roadmap milestone cards |
+| `.road` + `.ms` | roadmap capability cards |
 | `.btn` / `.btn.primary` (warm) / `.btn.cool` | CTAs — primary action is always warm |
 
 ### 5.4 Motion contract (learned the hard way)
@@ -172,7 +177,7 @@ Signature devices — reuse them, don't dilute them:
 Claims discipline:
 
 - Numbers are **budgets or measured evidence** — say which ("target", "budget",
-  "measured in `M1A_EVIDENCE.md`"). No adopted benchmark numbers from other
+  "measured in `DURABLE_MEMORY_EVIDENCE.md`"). No adopted benchmark numbers from other
   projects without attribution.
 - Competitors: factual, linked, respectful. Keep the courtesy line under the
   comparison table ("Respect to all of the above…"). Compare stated scope,
@@ -182,9 +187,9 @@ Claims discipline:
 
 ## 7. Update recipes
 
-### A. Milestone landed (most common)
+### A. Capability landed (most common)
 
-1. Read the milestone's evidence + contract doc headers to learn exact scope.
+1. Read the capability's evidence + contract doc headers to learn exact scope.
 2. Walk the sync map (§3) top to bottom. Small diffs, no rewrites.
 3. Site: usually only strip/tags/roadmap-cards/kicker change. Keep the hero
    hook unless positioning changed.
@@ -256,6 +261,7 @@ Zero hits required. Additional rules:
 [ ] git add used explicit paths only; diff reviewed
 [ ] status labels consistent across README / DESIGN / MEMORY_API / site (§3 grep)
 [ ] no claim exceeds its evidence layer (§4)
+[ ] public prose is self-contained: internal phase/round/backlog/checklist codes translated into behavior, impact, evidence, and limits
 [ ] site: single-file, no external requests, .rv safe, .nojekyll intact (if touched)
 [ ] hygiene scan clean (§8)
 [ ] after push: live site 200 + spot-check (if site touched)

@@ -19,6 +19,13 @@ TASK_STATES = {
 
 TERMINAL_STATES = {"completed", "failed", "canceled", "rejected", "dead-lettered"}
 
+ALLOWED_TASK_TRANSITIONS = {
+    "submitted": {"accepted", "working", "input-required", *TERMINAL_STATES},
+    "accepted": {"working", "input-required", *TERMINAL_STATES},
+    "working": {"working", "input-required", *TERMINAL_STATES},
+    "input-required": {"working", "input-required", *TERMINAL_STATES},
+}
+
 
 def utc_now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -49,3 +56,13 @@ def ensure_state(state: str) -> str:
         allowed = ", ".join(sorted(TASK_STATES))
         raise ValueError(f"unsupported task state {state!r}; expected one of: {allowed}")
     return state
+
+
+def ensure_transition(current: str, requested: str | None) -> None:
+    if current in TERMINAL_STATES:
+        raise ValueError(f"task is terminal in state {current!r}; events are immutable")
+    if requested is None:
+        return
+    ensure_state(requested)
+    if requested not in ALLOWED_TASK_TRANSITIONS.get(current, set()):
+        raise ValueError(f"invalid task state transition: {current!r} -> {requested!r}")

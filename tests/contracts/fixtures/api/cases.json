@@ -1,0 +1,19 @@
+{
+  "valid": [
+    {"schemaDef": "createNoteRequest", "instance": {"type": "handoff", "title": "Session handoff", "visibility": "direct:agent.beta", "body": "Inspect task task_demo_001.", "idempotencyKey": "handoff:session-001"}},
+    {"schemaDef": "createNoteResponse", "instance": {"id": "mem_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "author": "agent.alpha", "visibility": "direct:agent.beta", "recordedAt": "2026-07-19T10:10:00Z", "sourceRevision": 42, "traceId": "trace_0123456789abcdef"}},
+    {"schemaDef": "notePage", "instance": {"items": [], "nextCursor": "cursor_0123456789abcdef", "sourceRevision": 42, "indexedRevision": 41, "consistency": "eventual", "degraded": []}},
+    {"schemaDef": "inboxPage", "instance": {"consumerId": "codex.desktop", "items": [], "cursor": "cursor_0123456789abcdef"}},
+    {"schemaDef": "ackRequest", "instance": {"consumerId": "codex.desktop", "cursor": "cursor_0123456789abcdef"}},
+    {"schemaDef": "ackResponse", "instance": {"consumerId": "codex.desktop", "acked": true, "cursor": "cursor_0123456789abcdef"}},
+    {"schemaDef": "wakeupResponse", "instance": {"role": "data", "trust": "untrusted-memory", "sections": [{"kind": "profile", "items": []}, {"kind": "inbox", "items": []}, {"kind": "recent", "items": []}, {"kind": "activeTasks", "items": []}], "items": [], "truncated": false}},
+    {"schemaDef": "errorEnvelope", "instance": {"error": {"code": "SCOPE_DENIED", "message": "memory.share is required", "retryable": false}, "traceId": "trace_safe001"}}
+  ],
+  "invalid": [
+    {"schemaDef": "createNoteRequest", "reason": "body author cannot override principal", "instance": {"type": "note", "title": "Spoof", "visibility": "shared", "author": "agent.beta", "body": "bad", "idempotencyKey": "spoof-1"}},
+    {"schemaDef": "createNoteRequest", "reason": "recordedAt is server-only", "instance": {"type": "note", "title": "Spoof time", "visibility": "shared", "recordedAt": "2020-01-01T00:00:00Z", "body": "bad", "idempotencyKey": "spoof-2"}},
+    {"schemaDef": "ackRequest", "reason": "short or forged cursor", "instance": {"consumerId": "codex.desktop", "cursor": "forged"}},
+    {"schemaDef": "wakeupResponse", "reason": "memory cannot be system role", "instance": {"role": "system", "trust": "trusted", "sections": [{"kind": "profile", "items": []}, {"kind": "inbox", "items": []}, {"kind": "recent", "items": []}, {"kind": "activeTasks", "items": []}], "items": [], "truncated": false}},
+    {"schemaDef": "errorEnvelope", "reason": "unknown errors cannot leak implementation details", "instance": {"error": {"code": "C:\\private\\token.txt", "message": "secret", "retryable": false}, "traceId": "trace_safe001"}}
+  ]
+}

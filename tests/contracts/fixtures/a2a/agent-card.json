@@ -1,0 +1,42 @@
+{
+  "name": "A2A Superhub",
+  "description": "Durable coordination and provenance-first shared memory hub.",
+  "supportedInterfaces": [
+    {"url": "http://127.0.0.1:8787/a2a/v1", "protocolBinding": "JSONRPC", "protocolVersion": "1.0"}
+  ],
+  "version": "0.1.0",
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false,
+    "extensions": [
+      {
+        "uri": "https://phenomenoner.github.io/a2a-superhub/ext/shared-memory/v1",
+        "description": "Versioned A2A Superhub shared-memory operation hints.",
+        "required": false,
+        "params": {"apiVersion": "memory.v1", "noteSchema": "a2a-superhub.memory.note.v1"}
+      }
+    ]
+  },
+  "defaultInputModes": ["text/plain", "application/json"],
+  "defaultOutputModes": ["text/plain", "application/json"],
+  "skills": [
+    {
+      "id": "durable-coordination",
+      "name": "Durable coordination",
+      "description": "Create and inspect durable tasks and artifacts.",
+      "tags": ["coordination", "tasks", "artifacts"],
+      "examples": ["Create a task for agent.beta."],
+      "inputModes": ["application/json"],
+      "outputModes": ["application/json"]
+    },
+    {
+      "id": "shared-memory",
+      "name": "Shared memory",
+      "description": "Exchange versioned memory assertions with provenance.",
+      "tags": ["memory", "handoff", "inbox"],
+      "examples": ["Write a handoff about agent.beta."],
+      "inputModes": ["application/json"],
+      "outputModes": ["application/json"]
+    }
+  ]
+}

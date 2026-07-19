@@ -1,0 +1,11 @@
+{
+  "id": "idempotency-conflict",
+  "pipeline": "idempotency",
+  "initial": {"logicalResults": 0, "response": null},
+  "operations": [
+    {"op": "retry", "key": "note:alpha:002", "requestHash": "sha256:first"},
+    {"op": "retry", "key": "note:alpha:002", "requestHash": "sha256:first"},
+    {"op": "retry", "key": "note:alpha:002", "requestHash": "sha256:different"}
+  ],
+  "expected": {"logicalResults": 1, "response": 409}
+}

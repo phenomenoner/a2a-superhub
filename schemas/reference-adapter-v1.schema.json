@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://a2a-superhub.local/schemas/reference-adapter-v1.schema.json",
+  "title": "A2A Superhub reference adapter contract",
+  "$defs": {
+    "principal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["subject", "kind", "tokenId", "scopes"],
+      "properties": {
+        "subject": {"type": "string", "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$"},
+        "kind": {"enum": ["agent", "human", "service", "operator"]},
+        "tokenId": {"type": "string", "pattern": "^tok_[a-z0-9][a-z0-9_-]{2,63}$"},
+        "scopes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "memoryFoundation", "memorySharing", "timelineGraph", "safeWakeup", "taskLog", "watcherSideEffects", "runtimeWatcher", "adapter", "memoryFull", "memorySearch", "retrieval", "principal"],
+      "properties": {
+        "schema": {"const": "a2a-superhub.capabilities.v1"},
+        "memoryFoundation": {"type": "boolean"},
+        "memorySharing": {"type": "boolean"},
+        "timelineGraph": {"type": "boolean"},
+        "safeWakeup": {"type": "boolean"},
+        "taskLog": {"type": "boolean"},
+        "watcherSideEffects": {"type": "boolean"},
+        "runtimeWatcher": {"type": "boolean"},
+        "adapter": {"type": "boolean"},
+        "memoryFull": {"const": false},
+        "memorySearch": {"enum": ["keyword", "hybrid"]},
+        "retrieval": {
+          "type": "object",
+          "required": ["provider"],
+          "properties": {"provider": {"enum": ["keyword", "qdrant"]}}
+        },
+        "principal": {"$ref": "#/$defs/principal"}
+      }
+    },
+    "contextBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "trust", "content", "provenance"],
+      "properties": {
+        "role": {"const": "data"},
+        "trust": {"const": "untrusted-memory"},
+        "content": {"type": "string", "pattern": "^--- BEGIN A2A SUPERHUB UNTRUSTED DATA ---"},
+        "provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "principal", "consumerId"],
+          "properties": {
+            "source": {"const": "a2a-superhub"},
+            "principal": {"type": "string"},
+            "consumerId": {"type": "string"}
+          }
+        }
+      }
+    }
+  }
+}

@@ -50,3 +50,23 @@ Adapters should emit hub events as soon as meaningful local milestones happen:
 
 Terminal events should set the task state to `completed`, `failed`, `canceled`,
 or `rejected`.
+
+## Reference session adapter
+
+The removable `a2a_superhub.adapter.ReferenceAdapter` proves the session
+integration boundary. The server core does not import it.
+
+- Session start negotiates current capabilities and server-authenticated
+  identity, fetches the safe wakeup/inbox pack, and emits one delimited
+  `role=data`, `trust=untrusted-memory` block.
+- Delivery failure or process death before insertion leaves the cursor unread.
+  Ack happens only after the runtime delivery callback succeeds.
+- Session end requires an explicit `authorized=True` decision, write/share
+  scopes, an idempotency key, and validated task/event/artifact provenance
+  links. Author identity remains server-derived.
+- A legacy Agent Card is read-only discovery. Auth, connection, feature, role,
+  and scope mismatches fail distinctly.
+
+This adapter does not implement task submission, cancellation, MCP, A2A 1.0,
+or destructive operator actions. It can request the server's advertised search
+mode but does not own the retrieval provider.

@@ -1,0 +1,45 @@
+{
+  "schema": "a2a-superhub.memory-foundation-baseline.v1",
+  "platform": {
+    "system": "Windows",
+    "release": "11",
+    "machine": "AMD64",
+    "python": "3.12.5",
+    "implementation": "CPython",
+    "logicalCpuCount": 12,
+    "processor": "Intel64 Family 6 Model 158 Stepping 13, GenuineIntel"
+  },
+  "configuration": {
+    "storage": "real temporary filesystem plus SQLite/FTS5",
+    "journal": "ops WAL; derived index DELETE",
+    "delivery": "one about delivery per note",
+    "wakeupBudgetBytes": 65536,
+    "warmup": "none; one measured run per size"
+  },
+  "results": [
+    {
+      "notes": 1,
+      "write": {"seconds": 0.10144379999837838, "notesPerSecond": 9.85767489009664},
+      "rebuild": {"seconds": 0.14162079998641275, "indexed": 1, "notesPerSecond": 7.061109668183918},
+      "fts": {"seconds": 0.012939300009747967, "hits": 1, "query": "searchable baseline"},
+      "deliveryStartup": {"seconds": 0.10289889998966828, "deliveries": 1},
+      "wakeup": {"seconds": 0.07122209999943152, "role": "data", "items": 1, "bytes": 2155, "truncated": false}
+    },
+    {
+      "notes": 1000,
+      "write": {"seconds": 16.842203799984418, "notesPerSecond": 59.37465262122794},
+      "rebuild": {"seconds": 71.31722420000006, "indexed": 1000, "notesPerSecond": 14.021858130591673},
+      "fts": {"seconds": 0.5782401000033133, "hits": 50, "query": "searchable baseline"},
+      "deliveryStartup": {"seconds": 23.43507540001883, "deliveries": 1000},
+      "wakeup": {"seconds": 8.045463299989933, "role": "data", "items": 37, "bytes": 65019, "truncated": true}
+    },
+    {
+      "notes": 10000,
+      "write": {"seconds": 134.9343921999971, "notesPerSecond": 74.11009037027563},
+      "rebuild": {"seconds": 440.45116220001364, "indexed": 10000, "notesPerSecond": 22.70399276517039},
+      "fts": {"seconds": 0.21343370000249706, "hits": 50, "query": "searchable baseline"},
+      "deliveryStartup": {"seconds": 169.52878270001383, "deliveries": 10000},
+      "wakeup": {"seconds": 67.00521189998835, "role": "data", "items": 37, "bytes": 65019, "truncated": true}
+    }
+  ]
+}

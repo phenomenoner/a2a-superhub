@@ -1,0 +1,13 @@
+{
+  "id": "stale-index-authorization",
+  "pipeline": "authorization",
+  "initial": {
+    "requester": "agent.gamma",
+    "candidate": {"visibility": "shared", "revision": 8},
+    "authoritative": {"author": "agent.alpha", "visibility": "private", "revision": 9},
+    "emitted": null,
+    "degraded": []
+  },
+  "operations": [{"op": "final-authorize"}],
+  "expected": {"emitted": false, "degraded": ["STALE_VISIBILITY_REVISION"]}
+}

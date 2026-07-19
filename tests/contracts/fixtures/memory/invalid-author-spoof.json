@@ -1,0 +1,11 @@
+{
+  "schema": "a2a-superhub.memory.note.v1",
+  "id": "mem_44444444444444444444444444444444",
+  "type": "note",
+  "title": "Invalid author",
+  "author": "Agent Beta",
+  "visibility": "shared",
+  "recordedAt": "2026-07-19T10:04:00Z",
+  "source": {"kind": "api"},
+  "body": "Principal identifiers are normalized and server-derived."
+}

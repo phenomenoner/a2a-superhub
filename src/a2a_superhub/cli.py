@@ -10,6 +10,9 @@ from typing import Any
 from .artifacts import ArtifactStore
 from .server import run_server
 from .store import HubStore
+from .auth import Principal
+from .memory import MemoryService
+from .skill_package import SkillInstallError, install_skill, skill_source_path, uninstall_skill, validate_skill
 
 
 def _print(obj: Any) -> None:
@@ -31,7 +34,15 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 def cmd_serve(args: argparse.Namespace) -> int:
     token = args.token or os.environ.get("A2A_SUPERHUB_TOKEN")
-    run_server(args.state, host=args.host, port=args.port, token=token)
+    principals = _load_json(args.principals) if args.principals else None
+    run_server(
+        args.state, host=args.host, port=args.port, token=token, enable_memory=args.enable_memory,
+        enable_delivery=args.enable_delivery, enable_task_log=args.enable_task_log,
+        enable_watcher_side_effects=args.enable_watcher_side_effects,
+        task_log_intents=set(args.task_log_intent or []), principals=principals,
+        search_mode=args.search_mode, search_url=args.search_url,
+        search_cache_dir=args.search_cache_dir,
+    )
     return 0
 
 
@@ -137,6 +148,125 @@ def cmd_artifact_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cli_principal(args: argparse.Namespace) -> Principal:
+    return Principal("local.operator", "operator", "tok_cli", frozenset({"memory.read", "memory.write", "memory.share", "memory.admin"}))
+
+
+def cmd_memory_note_create(args: argparse.Namespace) -> int:
+    request = _load_json(args.file)
+    result = MemoryService(args.state).create_note(request, _cli_principal(args), idempotency_key=args.idempotency_key, source_kind="cli")
+    _print({"inserted": result.inserted, "revision": result.revision, "traceId": result.trace_id, "note": result.note})
+    return 0
+
+
+def cmd_memory_note_read(args: argparse.Namespace) -> int:
+    try:
+        note = MemoryService(args.state).read_note(args.note_id, _cli_principal(args))
+    except KeyError:
+        _print({"error": "note not found", "noteId": args.note_id})
+        return 2
+    _print(note)
+    return 0
+
+
+def cmd_memory_reindex(args: argparse.Namespace) -> int:
+    count = MemoryService(args.state).rebuild_index()
+    _print({"status": "rebuilt", "notes": count})
+    return 0
+
+
+def _search_service(args: argparse.Namespace) -> MemoryService:
+    provider = None
+    if args.search_mode in {"local", "server"}:
+        from .retrieval import QdrantRetrievalProvider
+        provider = QdrantRetrievalProvider(
+            args.state, mode=args.search_mode, url=args.search_url,
+            cache_dir=args.search_cache_dir,
+        )
+    return MemoryService(args.state, search_provider=provider)
+
+
+def cmd_memory_search(args: argparse.Namespace) -> int:
+    service = _search_service(args)
+    items = service.search(args.query, _cli_principal(args), limit=args.limit, mode=args.mode)
+    _print({"items": items, "search": service.search_status()})
+    return 0
+
+
+def cmd_memory_search_reindex(args: argparse.Namespace) -> int:
+    result = _search_service(args).rebuild_search_index()
+    _print(result)
+    return 0
+
+
+def cmd_memory_inbox_fetch(args: argparse.Namespace) -> int:
+    service = MemoryService(args.state, enable_delivery=True)
+    _print(service.fetch_inbox(_cli_principal(args), args.consumer_id, limit=args.limit))
+    return 0
+
+
+def cmd_memory_inbox_ack(args: argparse.Namespace) -> int:
+    service = MemoryService(args.state, enable_delivery=True)
+    _print(service.acknowledge_inbox(_cli_principal(args), args.consumer_id, args.cursor))
+    return 0
+
+
+def cmd_memory_wakeup(args: argparse.Namespace) -> int:
+    service = MemoryService(args.state, enable_delivery=True, hub_store=HubStore(args.state))
+    _print(service.wakeup(_cli_principal(args), args.consumer_id, budget_bytes=args.budget_bytes))
+    return 0
+
+
+def cmd_memory_timeline(args: argparse.Namespace) -> int:
+    pair = tuple(args.pair.split(",", 1)) if args.pair and "," in args.pair else None
+    _print({"items": MemoryService(args.state).timeline(
+        _cli_principal(args), project=args.project, pair=pair, about=args.about,
+        include_superseded=args.include_superseded, limit=args.limit,
+    )})
+    return 0
+
+
+def cmd_memory_graph(args: argparse.Namespace) -> int:
+    _print(MemoryService(args.state).graph(_cli_principal(args), args.node, hops=args.hops))
+    return 0
+
+
+def cmd_memory_stats(args: argparse.Namespace) -> int:
+    _print(MemoryService(args.state).stats(_cli_principal(args)))
+    return 0
+
+
+def cmd_skill_path(args: argparse.Namespace) -> int:
+    _print({"skill": "operate-a2a-superhub", "path": str(skill_source_path())})
+    return 0
+
+
+def cmd_skill_validate(args: argparse.Namespace) -> int:
+    result = validate_skill()
+    _print(result)
+    return 0 if result["valid"] else 2
+
+
+def cmd_skill_install(args: argparse.Namespace) -> int:
+    try:
+        result = install_skill(target=args.target, target_root=args.target_root, force=args.force)
+    except SkillInstallError as exc:
+        _print({"installed": False, "error": str(exc)})
+        return 2
+    _print(result)
+    return 0
+
+
+def cmd_skill_uninstall(args: argparse.Namespace) -> int:
+    try:
+        result = uninstall_skill(target=args.target, target_root=args.target_root)
+    except SkillInstallError as exc:
+        _print({"removed": False, "error": str(exc)})
+        return 2
+    _print(result)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="a2a-superhub", description="Standalone A2A task and artifact hub")
     parser.add_argument("--state", default="state", help="Hub state directory")
@@ -149,6 +279,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8787)
     p.add_argument("--token", help="Optional bearer token; otherwise A2A_SUPERHUB_TOKEN")
+    p.add_argument("--enable-memory", action="store_true", help="Enable the opt-in memory foundation endpoints")
+    p.add_argument("--enable-delivery", action="store_true", help="Enable durable memory inbox delivery")
+    p.add_argument("--enable-task-log", action="store_true", help="Enable terminal task-log sedimentation")
+    p.add_argument("--enable-watcher-side-effects", action="store_true", help="Allow local-admin missing-ID repair")
+    p.add_argument("--task-log-intent", action="append", help="Allowlisted task intent for sedimentation")
+    p.add_argument("--principals", help="Static bearer-token to principal JSON registry")
+    p.add_argument("--search-mode", choices=["keyword", "local", "server"], default="keyword")
+    p.add_argument("--search-url", help="Explicit Qdrant URL for server search mode")
+    p.add_argument("--search-cache-dir", help="FastEmbed model cache directory")
     p.set_defaults(func=cmd_serve)
 
     p = sub.add_parser("health", help="Print hub health from local state")
@@ -206,6 +345,72 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_artifact_get)
     p = artifact.add_parser("list", help="List artifacts")
     p.set_defaults(func=cmd_artifact_list)
+
+    memory = sub.add_parser("memory", help="Opt-in memory foundation commands").add_subparsers(dest="memory_command", required=True)
+    note = memory.add_parser("note", help="Memory note commands").add_subparsers(dest="note_command", required=True)
+    p = note.add_parser("create", help="Create a Markdown memory note")
+    p.add_argument("--file", required=True)
+    p.add_argument("--idempotency-key")
+    p.set_defaults(func=cmd_memory_note_create)
+    p = note.add_parser("read", help="Read an authorized memory note")
+    p.add_argument("note_id")
+    p.set_defaults(func=cmd_memory_note_read)
+    p = memory.add_parser("reindex", help="Rebuild derived memory indexes from Markdown")
+    p.set_defaults(func=cmd_memory_reindex)
+    p = memory.add_parser("search", help="Search authorized memory notes")
+    p.add_argument("query")
+    p.add_argument("--mode", choices=["auto", "hybrid", "keyword"], default="auto")
+    p.add_argument("--limit", type=int, default=50)
+    p.add_argument("--search-mode", choices=["keyword", "local", "server"], default="keyword")
+    p.add_argument("--search-url")
+    p.add_argument("--search-cache-dir")
+    p.set_defaults(func=cmd_memory_search)
+    p = memory.add_parser("search-reindex", help="Build or resume the derived hybrid index")
+    p.add_argument("--search-mode", choices=["local", "server"], default="local")
+    p.add_argument("--search-url")
+    p.add_argument("--search-cache-dir")
+    p.set_defaults(func=cmd_memory_search_reindex)
+    inbox = memory.add_parser("inbox", help="Durable inbox commands").add_subparsers(dest="inbox_command", required=True)
+    p = inbox.add_parser("fetch", help="Fetch without acknowledging")
+    p.add_argument("--consumer-id", required=True)
+    p.add_argument("--limit", type=int, default=100)
+    p.set_defaults(func=cmd_memory_inbox_fetch)
+    p = inbox.add_parser("ack", help="Acknowledge an issued cursor")
+    p.add_argument("--consumer-id", required=True)
+    p.add_argument("--cursor", required=True)
+    p.set_defaults(func=cmd_memory_inbox_ack)
+    p = memory.add_parser("wakeup", help="Build a bounded untrusted wakeup pack")
+    p.add_argument("--consumer-id", required=True)
+    p.add_argument("--budget-bytes", type=int, default=65536)
+    p.set_defaults(func=cmd_memory_wakeup)
+    p = memory.add_parser("timeline", help="Read an authorized memory timeline")
+    p.add_argument("--project")
+    p.add_argument("--pair")
+    p.add_argument("--about")
+    p.add_argument("--include-superseded", action="store_true")
+    p.add_argument("--limit", type=int, default=100)
+    p.set_defaults(func=cmd_memory_timeline)
+    p = memory.add_parser("graph", help="Read an authorized 1-2 hop graph")
+    p.add_argument("--node", required=True)
+    p.add_argument("--hops", type=int, choices=[1, 2], default=1)
+    p.set_defaults(func=cmd_memory_graph)
+    p = memory.add_parser("stats", help="Print sanitized memory operational stats")
+    p.set_defaults(func=cmd_memory_stats)
+
+    skill = sub.add_parser("skill", help="Discover, validate, install, or remove the product Skill").add_subparsers(dest="skill_command", required=True)
+    p = skill.add_parser("path", help="Print the canonical packaged Skill path")
+    p.set_defaults(func=cmd_skill_path)
+    p = skill.add_parser("validate", help="Validate Skill structure and contract fingerprint")
+    p.set_defaults(func=cmd_skill_validate)
+    p = skill.add_parser("install", help="Install the product Skill into a supported agent runtime")
+    p.add_argument("--target", choices=["codex"], required=True)
+    p.add_argument("--target-root", help="Absolute Codex home override")
+    p.add_argument("--force", action="store_true", help="Create a recoverable backup before replacement")
+    p.set_defaults(func=cmd_skill_install)
+    p = skill.add_parser("uninstall", help="Remove only files owned by this Skill installer")
+    p.add_argument("--target", choices=["codex"], required=True)
+    p.add_argument("--target-root", help="Absolute Codex home override")
+    p.set_defaults(func=cmd_skill_uninstall)
 
     return parser
 

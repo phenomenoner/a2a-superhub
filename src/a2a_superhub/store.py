@@ -3,9 +3,9 @@ from __future__ import annotations
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-from .models import ensure_object, ensure_state, json_dumps, json_loads, new_id, utc_now
+from .models import TERMINAL_STATES, ensure_object, ensure_state, ensure_transition, json_dumps, json_loads, new_id, utc_now
 
 
 class HubStore:
@@ -49,21 +49,48 @@ class HubStore:
                     kind TEXT NOT NULL,
                     state TEXT,
                     payload_json TEXT NOT NULL,
+                    sequence INTEGER,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY(task_id) REFERENCES tasks(task_id)
                 );
-                CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, created_at);
+                CREATE TABLE IF NOT EXISTS terminal_outbox (
+                    operation_id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL,
+                    event_sequence INTEGER NOT NULL,
+                    terminal_state TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    acknowledged_at TEXT,
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+                    UNIQUE(task_id, event_sequence)
+                );
                 CREATE INDEX IF NOT EXISTS idx_tasks_to_state ON tasks(to_agent, state);
                 """
             )
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(events)").fetchall()}
+            if "sequence" not in columns:
+                conn.execute("ALTER TABLE events ADD COLUMN sequence INTEGER")
+            task_ids = conn.execute("SELECT DISTINCT task_id FROM events WHERE sequence IS NULL").fetchall()
+            for task_row in task_ids:
+                rows = conn.execute(
+                    "SELECT event_id FROM events WHERE task_id = ? ORDER BY created_at, rowid",
+                    (task_row[0],),
+                ).fetchall()
+                for sequence, event_row in enumerate(rows, start=1):
+                    conn.execute("UPDATE events SET sequence = ? WHERE event_id = ?", (sequence, event_row[0]))
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_events_task_sequence ON events(task_id, sequence)")
 
     @contextmanager
     def connect(self):
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=10.0)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=10000")
         try:
             yield conn
             conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
         finally:
             conn.close()
 
@@ -183,24 +210,58 @@ class HubStore:
         payload: dict[str, Any] | None = None,
         *,
         state: str | None = None,
+        failpoint: str | Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         self.init()
         if state is not None:
             ensure_state(state)
         now = utc_now()
         with self.connect() as conn:
-            if not conn.execute("SELECT 1 FROM tasks WHERE task_id = ?", (task_id,)).fetchone():
+            conn.execute("BEGIN IMMEDIATE")
+            task_row = conn.execute("SELECT state FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+            if not task_row:
                 raise KeyError(f"task not found: {task_id}")
-            event = self._append_event_conn(conn, task_id, kind, state, payload or {}, now)
+            ensure_transition(task_row["state"], state)
+            event = self._append_event_conn(conn, task_id, kind, state, payload or {}, now, failpoint=failpoint)
             if state is not None:
                 conn.execute("UPDATE tasks SET state = ?, updated_at = ? WHERE task_id = ?", (state, now, task_id))
+        self._hit_failpoint(failpoint, "after_commit_before_return")
         return event
 
     def list_events(self, task_id: str) -> list[dict[str, Any]]:
         self.init()
         with self.connect() as conn:
-            rows = conn.execute("SELECT * FROM events WHERE task_id = ? ORDER BY created_at", (task_id,)).fetchall()
+            rows = conn.execute("SELECT * FROM events WHERE task_id = ? ORDER BY sequence", (task_id,)).fetchall()
         return [self._event_from_row(row) for row in rows]
+
+    def list_terminal_outbox(self, *, pending_only: bool = True) -> list[dict[str, Any]]:
+        self.init()
+        where = "WHERE acknowledged_at IS NULL" if pending_only else ""
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM terminal_outbox {where} ORDER BY created_at, operation_id"
+            ).fetchall()
+        return [
+            {
+                "operationId": row["operation_id"],
+                "taskId": row["task_id"],
+                "eventSequence": row["event_sequence"],
+                "terminalState": row["terminal_state"],
+                "payload": json_loads(row["payload_json"], {}),
+                "createdAt": row["created_at"],
+                "acknowledgedAt": row["acknowledged_at"],
+            }
+            for row in rows
+        ]
+
+    def acknowledge_terminal_outbox(self, operation_id: str, *, acknowledged_at: str | None = None) -> bool:
+        self.init()
+        with self.connect() as conn:
+            result = conn.execute(
+                "UPDATE terminal_outbox SET acknowledged_at = COALESCE(acknowledged_at, ?) WHERE operation_id = ?",
+                (acknowledged_at or utc_now(), operation_id),
+            )
+        return result.rowcount == 1
 
     def health(self) -> dict[str, Any]:
         self.init()
@@ -224,20 +285,45 @@ class HubStore:
         state: str | None,
         payload: dict[str, Any],
         now: str,
+        failpoint: str | Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
+        sequence = conn.execute(
+            "SELECT COALESCE(MAX(sequence), 0) + 1 FROM events WHERE task_id = ?",
+            (task_id,),
+        ).fetchone()[0]
         event = {
             "eventId": new_id("evt"),
             "taskId": task_id,
             "kind": kind,
             "state": state,
             "payload": payload,
+            "sequence": sequence,
             "createdAt": now,
         }
         conn.execute(
-            "INSERT INTO events(event_id, task_id, kind, state, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (event["eventId"], task_id, kind, state, json_dumps(payload), now),
+            "INSERT INTO events(event_id, task_id, kind, state, payload_json, sequence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (event["eventId"], task_id, kind, state, json_dumps(payload), sequence, now),
         )
+        if state in TERMINAL_STATES:
+            self._hit_failpoint(failpoint, "after_event_before_outbox")
+            operation_id = f"tasklog:{task_id}:{sequence}"
+            conn.execute(
+                """
+                INSERT INTO terminal_outbox(
+                    operation_id, task_id, event_sequence, terminal_state, payload_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(operation_id) DO NOTHING
+                """,
+                (operation_id, task_id, sequence, state, json_dumps(payload), now),
+            )
         return event
+
+    @staticmethod
+    def _hit_failpoint(failpoint: str | Callable[[str], None] | None, stage: str) -> None:
+        if callable(failpoint):
+            failpoint(stage)
+        elif failpoint == stage:
+            raise RuntimeError(f"failpoint:{stage}")
 
     def _task_from_row(self, row: sqlite3.Row) -> dict[str, Any]:
         return {
@@ -264,6 +350,7 @@ class HubStore:
             "kind": row["kind"],
             "state": row["state"],
             "payload": json_loads(row["payload_json"], {}),
+            "sequence": row["sequence"],
             "createdAt": row["created_at"],
         }
 

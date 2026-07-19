@@ -1,0 +1,12 @@
+{
+  "schema": "a2a-superhub.memory.note.v1",
+  "id": "mem_33333333333333333333333333333333",
+  "type": "profile",
+  "title": "Agent beta profile",
+  "author": "agent.beta",
+  "visibility": "shared",
+  "recordedAt": "2026-07-19T10:03:00Z",
+  "source": {"kind": "cli"},
+  "about": ["agent.beta"],
+  "body": "Agent beta owns gateway diagnostics."
+}

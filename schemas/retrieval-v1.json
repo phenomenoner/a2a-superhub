@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://a2a-superhub.example/schemas/retrieval-v1.json",
+  "title": "A2A Superhub retrieval manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "dense_model", "dense_source", "dense_revision", "dense_license", "dense_dimension", "sparse_model", "sparse_revision", "sparse_license", "chunk_chars", "chunk_overlap", "tokenizer_config_hash"],
+  "properties": {
+    "schema": {"const": "a2a-superhub.embedding-manifest.v1"},
+    "dense_model": {"const": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"},
+    "dense_source": {"const": "qdrant/paraphrase-multilingual-MiniLM-L12-v2-onnx-Q"},
+    "dense_revision": {"const": "faf4aa4225822f3bc6376869cb1164e8e3feedd0"},
+    "dense_license": {"const": "apache-2.0"},
+    "dense_dimension": {"const": 384},
+    "sparse_model": {"const": "Qdrant/bm25"},
+    "sparse_revision": {"const": "e499a1f8d6bec960aab5533a0941bf914e70faf9"},
+    "sparse_license": {"const": "apache-2.0"},
+    "chunk_chars": {"type": "integer", "minimum": 32},
+    "chunk_overlap": {"type": "integer", "minimum": 0},
+    "tokenizer_config_hash": {"const": "63f894a4ce2e6b4a610a1b9b33667a27ebce95eef77bb02ad0e32a5147933d4c"}
+  }
+}

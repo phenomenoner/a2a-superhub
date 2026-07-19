@@ -1,0 +1,11 @@
+{
+  "schema": "a2a-superhub.memory.note.v1",
+  "id": "mem_22222222222222222222222222222222",
+  "type": "task-log",
+  "title": "Task completed",
+  "author": "local.operator",
+  "visibility": "shared",
+  "recordedAt": "2026-07-19T10:02:00Z",
+  "source": {"kind": "task-event", "taskId": "task_demo_002", "eventSeq": 7},
+  "body": "Structured completion record; no raw event excerpt."
+}

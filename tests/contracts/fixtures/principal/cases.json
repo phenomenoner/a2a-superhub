@@ -1,0 +1,18 @@
+{
+  "valid": [
+    {"subject": "agent.alpha", "kind": "agent", "tokenId": "tok_alpha_01", "scopes": ["task.read", "task.write", "memory.read", "memory.write", "memory.share"]},
+    {"subject": "local.operator", "kind": "operator", "tokenId": "tok_local_operator", "scopes": ["task.read", "task.write", "artifact.read", "artifact.write", "memory.read", "memory.write", "memory.share", "memory.admin", "hub.admin"]}
+  ],
+  "invalid": [
+    {"subject": "Agent Alpha", "kind": "agent", "tokenId": "tok_bad_case", "scopes": ["memory.read"]},
+    {"subject": "agent.alpha", "kind": "agent", "tokenId": "tok_has_secret", "scopes": ["memory.read"], "token": "must-not-appear"},
+    {"subject": "agent.alpha", "kind": "agent", "tokenId": "tok_bad_scope", "scopes": ["memory.root"]}
+  ],
+  "startup": [
+    {"bind": "127.0.0.1", "authConfigured": false, "expected": "allow-local-operator"},
+    {"bind": "::1", "authConfigured": false, "expected": "allow-local-operator"},
+    {"bind": "0.0.0.0", "authConfigured": false, "expected": "deny"},
+    {"bind": "192.0.2.10", "authConfigured": false, "expected": "deny"},
+    {"bind": "0.0.0.0", "authConfigured": true, "expected": "allow-authenticated"}
+  ]
+}

@@ -1,0 +1,257 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://phenomenoner.github.io/a2a-superhub/schemas/memory-api-v1.schema.json",
+  "title": "A2A Superhub memory HTTP API v1 examples contract",
+  "$defs": {
+    "idempotencyKey": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "cursor": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 4096,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "createNoteRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "title", "visibility", "body", "idempotencyKey"],
+      "properties": {
+        "type": {"enum": ["note", "decision", "handoff", "observation", "task-log", "profile"]},
+        "title": {"type": "string", "minLength": 1, "maxLength": 256},
+        "visibility": {
+          "oneOf": [
+            {"enum": ["private", "shared"]},
+            {"type": "string", "pattern": "^direct:[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$"}
+          ]
+        },
+        "occurredAt": {"type": "string", "format": "date-time"},
+        "project": {"type": "string", "minLength": 1, "maxLength": 128},
+        "participants": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"type": "string"}},
+        "about": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"type": "string"}},
+        "tags": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 64}},
+        "supersedes": {"type": "string", "pattern": "^mem_[0-9a-f]{32}$"},
+        "relations": {"type": "array", "maxItems": 128, "items": {"type": "object"}},
+        "body": {"type": "string", "maxLength": 262144},
+        "idempotencyKey": {"$ref": "#/$defs/idempotencyKey"}
+      }
+    },
+    "noteSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "author", "visibility", "recordedAt", "sourceRevision"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^mem_[0-9a-f]{32}$"},
+        "author": {"type": "string"},
+        "visibility": {"type": "string"},
+        "recordedAt": {"type": "string", "format": "date-time"},
+        "sourceRevision": {"type": "integer", "minimum": 1}
+      }
+    },
+    "createNoteResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "author", "visibility", "recordedAt", "sourceRevision", "traceId"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^mem_[0-9a-f]{32}$"},
+        "author": {"type": "string"},
+        "visibility": {"type": "string"},
+        "recordedAt": {"type": "string", "format": "date-time"},
+        "sourceRevision": {"type": "integer", "minimum": 1},
+        "traceId": {"type": "string", "pattern": "^[A-Za-z0-9_-]{8,128}$"}
+      }
+    },
+    "memoryNote": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "id", "type", "title", "author", "visibility", "recordedAt", "source", "body"],
+      "properties": {
+        "schema": {"const": "a2a-superhub.memory.note.v1"},
+        "id": {"type": "string", "pattern": "^mem_[0-9a-f]{32}$"},
+        "type": {"enum": ["note", "decision", "handoff", "observation", "task-log", "profile"]},
+        "title": {"type": "string", "minLength": 1, "maxLength": 256},
+        "author": {"type": "string", "minLength": 1, "maxLength": 128},
+        "visibility": {"type": "string"},
+        "recordedAt": {"type": "string", "format": "date-time"},
+        "occurredAt": {"type": "string", "format": "date-time"},
+        "updatedAt": {"type": "string", "format": "date-time"},
+        "source": {
+          "type": "object", "additionalProperties": false, "required": ["kind"],
+          "properties": {
+            "kind": {"enum": ["api", "cli", "filesystem", "task-event", "federation"]},
+            "taskId": {"type": "string"}, "eventSeq": {"type": "integer", "minimum": 1},
+            "artifactId": {"type": "string"}, "relativePath": {"type": "string"}
+          }
+        },
+        "project": {"type": "string"},
+        "participants": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "about": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "tags": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "artifacts": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "supersedes": {"type": "string", "pattern": "^mem_[0-9a-f]{32}$"},
+        "relations": {
+          "type": "array", "items": {
+            "type": "object", "additionalProperties": false, "required": ["type", "target"],
+            "properties": {"type": {"type": "string"}, "target": {"type": "string"}}
+          }
+        },
+        "body": {"type": "string", "maxLength": 262144}
+      }
+    },
+    "provenance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["noteId", "author", "recordedAt"],
+      "properties": {
+        "noteId": {"type": "string", "pattern": "^mem_[0-9a-f]{32}$"},
+        "author": {"type": "string"}, "recordedAt": {"type": "string", "format": "date-time"},
+        "visibility": {"type": "string"}
+      }
+    },
+    "inboxItem": {
+      "type": "object", "additionalProperties": false,
+      "required": ["deliveryId", "reason", "note", "provenance"],
+      "properties": {
+        "deliveryId": {"type": "string", "pattern": "^del_[0-9a-f]{64}$"},
+        "reason": {"enum": ["about", "direct", "handoff"]},
+        "note": {"$ref": "#/$defs/memoryNote"}, "provenance": {"$ref": "#/$defs/provenance"}
+      }
+    },
+    "notePage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items", "sourceRevision", "indexedRevision", "consistency", "degraded"],
+      "properties": {
+        "items": {"type": "array", "items": {"$ref": "#/$defs/noteSummary"}},
+        "nextCursor": {"$ref": "#/$defs/cursor"},
+        "search": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["provider"],
+          "properties": {
+            "provider": {"enum": ["keyword", "qdrant"]},
+            "mode": {"enum": ["keyword", "local", "server"]},
+            "fallback": {"type": "boolean"},
+            "capabilities": {"type": "object"},
+            "active": {"type": ["object", "null"]},
+            "rebuild": {"type": ["object", "null"]},
+            "fallbackReason": {"type": ["string", "null"]}
+          }
+        },
+        "sourceRevision": {"type": "integer", "minimum": 0},
+        "indexedRevision": {"type": "integer", "minimum": 0},
+        "consistency": {"const": "eventual"},
+        "degraded": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "inboxPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["consumerId", "items", "cursor"],
+      "properties": {
+        "consumerId": {"type": "string", "minLength": 1, "maxLength": 128},
+        "items": {"type": "array", "items": {"$ref": "#/$defs/inboxItem"}},
+        "cursor": {"$ref": "#/$defs/cursor"}
+      }
+    },
+    "ackRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["consumerId", "cursor"],
+      "properties": {
+        "consumerId": {"type": "string", "minLength": 1, "maxLength": 128},
+        "cursor": {"$ref": "#/$defs/cursor"}
+      }
+    },
+    "ackResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["consumerId", "acked", "cursor"],
+      "properties": {
+        "consumerId": {"type": "string"},
+        "acked": {"type": "boolean"},
+        "cursor": {"$ref": "#/$defs/cursor"}
+      }
+    },
+    "wakeupResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "trust", "sections", "items", "truncated"],
+      "properties": {
+        "role": {"const": "data"},
+        "trust": {"const": "untrusted-memory"},
+        "consumerId": {"type": "string"},
+        "cursor": {"$ref": "#/$defs/cursor"},
+        "sections": {
+          "type": "array", "minItems": 4, "maxItems": 4,
+          "prefixItems": [
+            {"$ref": "#/$defs/wakeupProfileSection"}, {"$ref": "#/$defs/wakeupInboxSection"},
+            {"$ref": "#/$defs/wakeupRecentSection"}, {"$ref": "#/$defs/wakeupTaskSection"}
+          ],
+          "items": false
+        },
+        "items": {"type": "array", "items": {"$ref": "#/$defs/wakeupNoteItem"}},
+        "truncated": {"type": "boolean"}
+      }
+    },
+    "wakeupNoteItem": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "role", "trust", "delimiter", "endDelimiter", "provenance", "note"],
+      "properties": {
+        "kind": {"enum": ["profile", "inbox", "recent"]}, "role": {"const": "data"},
+        "trust": {"const": "untrusted-memory"}, "delimiter": {"const": "--- BEGIN UNTRUSTED MEMORY ---"},
+        "endDelimiter": {"const": "--- END UNTRUSTED MEMORY ---"},
+        "provenance": {"$ref": "#/$defs/provenance"}, "note": {"$ref": "#/$defs/memoryNote"},
+        "deliveryId": {"type": "string", "pattern": "^del_[0-9a-f]{64}$"},
+        "reason": {"enum": ["about", "direct", "handoff"]}
+      }
+    },
+    "wakeupTaskItem": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "role", "trust", "delimiter", "endDelimiter", "provenance", "task"],
+      "properties": {
+        "kind": {"const": "active-task"}, "role": {"const": "data"}, "trust": {"const": "untrusted-memory"},
+        "delimiter": {"const": "--- BEGIN UNTRUSTED TASK LINK ---"},
+        "endDelimiter": {"const": "--- END UNTRUSTED TASK LINK ---"},
+        "provenance": {
+          "type": "object", "additionalProperties": false, "required": ["taskId", "conversationId", "updatedAt"],
+          "properties": {"taskId": {"type": "string"}, "conversationId": {"type": "string"}, "updatedAt": {"type": "string"}}
+        },
+        "task": {
+          "type": "object", "additionalProperties": false,
+          "required": ["taskId", "conversationId", "fromAgent", "toAgent", "intent", "state", "createdAt", "updatedAt"],
+          "properties": {
+            "taskId": {"type": "string"}, "conversationId": {"type": "string"}, "fromAgent": {"type": "string"},
+            "toAgent": {"type": "string"}, "intent": {"type": "string"}, "state": {"type": "string"},
+            "createdAt": {"type": "string"}, "updatedAt": {"type": "string"}
+          }
+        }
+      }
+    },
+    "wakeupProfileSection": {"type": "object", "additionalProperties": false, "required": ["kind", "items"], "properties": {"kind": {"const": "profile"}, "items": {"type": "array", "items": {"$ref": "#/$defs/wakeupNoteItem"}}}},
+    "wakeupInboxSection": {"type": "object", "additionalProperties": false, "required": ["kind", "items"], "properties": {"kind": {"const": "inbox"}, "items": {"type": "array", "items": {"$ref": "#/$defs/wakeupNoteItem"}}}},
+    "wakeupRecentSection": {"type": "object", "additionalProperties": false, "required": ["kind", "items"], "properties": {"kind": {"const": "recent"}, "items": {"type": "array", "items": {"$ref": "#/$defs/wakeupNoteItem"}}}},
+    "wakeupTaskSection": {"type": "object", "additionalProperties": false, "required": ["kind", "items"], "properties": {"kind": {"const": "activeTasks"}, "items": {"type": "array", "items": {"$ref": "#/$defs/wakeupTaskItem"}}}},
+    "errorEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["error", "traceId"],
+      "properties": {
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message", "retryable"],
+          "properties": {
+            "code": {"enum": ["INVALID_REQUEST", "REQUEST_TOO_LARGE", "AUTH_REQUIRED", "SCOPE_DENIED", "NOT_FOUND", "IDEMPOTENCY_CONFLICT", "CURSOR_INVALID", "REVISION_STALE", "INTERNAL_ERROR"]},
+            "message": {"type": "string", "minLength": 1, "maxLength": 512},
+            "retryable": {"type": "boolean"},
+            "details": {"type": "object"}
+          }
+        },
+        "traceId": {"type": "string", "pattern": "^[A-Za-z0-9_-]{8,128}$"}
+      }
+    }
+  }
+}

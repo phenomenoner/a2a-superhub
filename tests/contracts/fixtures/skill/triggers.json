@@ -1,0 +1,22 @@
+{
+  "positive": [
+    "Use A2A Superhub to check agent.beta's inbox.",
+    "Write this result as a Superhub handoff.",
+    "Diagnose why the local a2a-superhub memory index is degraded.",
+    "Use Superhub to create a task for agent.alpha.",
+    "Find the previous gateway observation in A2A Superhub shared memory.",
+    "Validate the operate-a2a-superhub skill installation."
+  ],
+  "negative": [
+    "What is the A2A protocol?",
+    "Design a generic agent memory system.",
+    "Compare Qdrant and pgvector.",
+    "Summarize this GitHub repository.",
+    "Operate a different product also called Super Hub."
+  ],
+  "ambiguous": [
+    "Is a Superhub running on this machine?",
+    "Can this hub remember things?"
+  ],
+  "ambiguousPolicy": "read-only-discovery"
+}

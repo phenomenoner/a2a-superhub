@@ -1,0 +1,12 @@
+{
+  "id": "cursor-ack-replay",
+  "pipeline": "cursor",
+  "initial": {"principal": "agent.beta", "consumerId": "codex.desktop", "issued": [4], "acked": 0, "response": null},
+  "operations": [
+    {"op": "ack", "principal": "agent.beta", "consumerId": "codex.desktop", "sequence": 4},
+    {"op": "ack", "principal": "agent.beta", "consumerId": "codex.desktop", "sequence": 4},
+    {"op": "ack", "principal": "agent.beta", "consumerId": "codex.desktop", "sequence": 2},
+    {"op": "ack", "principal": "agent.gamma", "consumerId": "codex.desktop", "sequence": 4}
+  ],
+  "expected": {"acked": 4, "response": "CURSOR_INVALID"}
+}

@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://phenomenoner.github.io/a2a-superhub/schemas/memory-note-v1.schema.json",
+  "title": "A2A Superhub memory note v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "type", "title", "author", "visibility", "recordedAt", "source", "body"],
+  "properties": {
+    "schema": {"const": "a2a-superhub.memory.note.v1"},
+    "id": {"type": "string", "pattern": "^mem_[0-9a-f]{32}$"},
+    "type": {"enum": ["note", "decision", "handoff", "observation", "task-log", "profile"]},
+    "title": {"type": "string", "minLength": 1, "maxLength": 256},
+    "author": {"$ref": "#/$defs/principalId"},
+    "visibility": {
+      "oneOf": [
+        {"enum": ["private", "shared"]},
+        {"type": "string", "pattern": "^direct:[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$"}
+      ]
+    },
+    "recordedAt": {"type": "string", "format": "date-time"},
+    "occurredAt": {"type": "string", "format": "date-time"},
+    "updatedAt": {"type": "string", "format": "date-time"},
+    "source": {"$ref": "#/$defs/source"},
+    "project": {"type": "string", "minLength": 1, "maxLength": 128},
+    "participants": {"$ref": "#/$defs/principalList"},
+    "about": {"$ref": "#/$defs/principalList"},
+    "tags": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 64}
+    },
+    "artifacts": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+    },
+    "supersedes": {"type": "string", "pattern": "^mem_[0-9a-f]{32}$"},
+    "relations": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {"$ref": "#/$defs/relation"}
+    },
+    "body": {"type": "string", "maxLength": 262144}
+  },
+  "$defs": {
+    "principalId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$"
+    },
+    "principalList": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/principalId"}
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {"enum": ["api", "cli", "filesystem", "task-event", "federation"]},
+        "taskId": {"type": "string", "minLength": 1, "maxLength": 128},
+        "eventSeq": {"type": "integer", "minimum": 1},
+        "artifactId": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "relativePath": {"type": "string", "minLength": 1, "maxLength": 512}
+      }
+    },
+    "relation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "target"],
+      "properties": {
+        "type": {
+          "oneOf": [
+            {"enum": ["about", "relates_to", "depends_on", "blocks", "produced_by", "updates", "disputes", "references"]},
+            {"type": "string", "pattern": "^x-[a-z0-9][a-z0-9.-]{0,62}$"}
+          ]
+        },
+        "target": {"type": "string", "minLength": 1, "maxLength": 256}
+      }
+    }
+  }
+}

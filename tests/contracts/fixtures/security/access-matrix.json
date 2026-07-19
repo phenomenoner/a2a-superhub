@@ -1,0 +1,32 @@
+{
+  "principals": {
+    "owner": {"subject": "agent.alpha", "scopes": ["memory.read", "memory.write", "memory.share"]},
+    "recipient": {"subject": "agent.beta", "scopes": ["memory.read"]},
+    "other": {"subject": "agent.gamma", "scopes": ["memory.read"]},
+    "admin": {"subject": "local.operator", "scopes": ["memory.read", "memory.write", "memory.share", "memory.admin"]},
+    "writer": {"subject": "agent.writer", "scopes": ["memory.write"]},
+    "shareWriter": {"subject": "agent.sharer", "scopes": ["memory.write", "memory.share"]},
+    "unscoped": {"subject": "agent.none", "scopes": []}
+  },
+  "notes": {
+    "private": {"author": "agent.alpha", "visibility": "private"},
+    "shared": {"author": "agent.alpha", "visibility": "shared"},
+    "direct": {"author": "agent.alpha", "visibility": "direct:agent.beta"}
+  },
+  "readSurfaces": ["note", "search", "snippet", "timeline", "graph", "wakeup", "inbox", "stats"],
+  "expectedRead": {
+    "owner": ["private", "shared", "direct"],
+    "recipient": ["shared", "direct"],
+    "other": ["shared"],
+    "admin": ["private", "shared", "direct"],
+    "writer": [],
+    "shareWriter": [],
+    "unscoped": []
+  },
+  "expectedCreate": {
+    "private": ["owner", "admin", "writer", "shareWriter"],
+    "shared": ["owner", "admin", "shareWriter"],
+    "direct": ["owner", "admin", "shareWriter"]
+  },
+  "expectedSupersede": ["owner", "admin"]
+}

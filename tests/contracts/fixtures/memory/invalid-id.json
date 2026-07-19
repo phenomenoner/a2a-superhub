@@ -1,0 +1,11 @@
+{
+  "schema": "a2a-superhub.memory.note.v1",
+  "id": "memory-not-a-uuid",
+  "type": "note",
+  "title": "Invalid ID",
+  "author": "agent.alpha",
+  "visibility": "shared",
+  "recordedAt": "2026-07-19T10:05:00Z",
+  "source": {"kind": "api"},
+  "body": "Invalid fixture."
+}

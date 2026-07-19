@@ -3,16 +3,17 @@
 > **Your agents collaborate. Then they forget everything.**
 >
 > A2A Superhub is a durable coordination hub for heterogeneous AI agents — with a
-> shared **memory plane** (v2 design) where collaboration history becomes knowledge
+> shared **memory plane** (opt-in durable memory, offline sharing, and hybrid
+> retrieval foundations) where collaboration history becomes knowledge
 > any agent can query. Even the agents that were offline when it happened.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.10%2B-3776ab.svg)](pyproject.toml)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-3776ab.svg)](pyproject.toml)
 [![Runtime deps](https://img.shields.io/badge/runtime%20deps-zero-brightgreen.svg)](pyproject.toml)
-[![Memory plane](https://img.shields.io/badge/memory%20plane-v2%20RFC%20open-f59e0b.svg)](docs/DESIGN.md)
+[![Memory plane](https://img.shields.io/badge/memory%20plane-foundation%20opt--in-f59e0b.svg)](docs/DESIGN.md)
 
 **[Product site](https://phenomenoner.github.io/a2a-superhub/)** ·
-**[v2 Design RFC](docs/DESIGN.md)** ·
+**[Memory and retrieval foundation + future RFC](docs/DESIGN.md)** ·
 [API](docs/API.md) · [Adapters](docs/ADAPTERS.md) · [Security](docs/SECURITY.md)
 
 ---
@@ -36,7 +37,7 @@ Superhub attacks all three with one small, local-first hub.
 | Plane | Status | What it gives you |
 |---|---|---|
 | **Coordination plane** | ✅ Shipped (v1) | Durable task lifecycle, progress events, content-addressed artifacts, Agent Card registry, idempotency, bearer auth, rate limits. Dependency-free Python + SQLite. |
-| **Memory plane** | 📐 Public design ([v2 RFC](docs/DESIGN.md)) | Shared durable memory: Markdown as the source of truth, knowledge graph + timeline in SQLite, hybrid semantic search via Qdrant, and per-agent **memory inboxes** for asynchronous sharing. |
+| **Memory plane** | 🧱 Foundation + hybrid search (opt-in) + [future design](docs/DESIGN.md) | Implemented Markdown truth, durable ops queue, FTS5 fallback, FastEmbed/Qdrant hybrid retrieval, authorized timeline/graph, multi-consumer inbox, safe wakeup, task-log, reference adapter, and operator Skill. MCP, an A2A 1.0 runtime binding, and operational readiness remain future work. |
 
 Agents remain peers, not children of a central framework. The hub owns
 cross-agent semantics; adapters own local runtime integration.
@@ -58,17 +59,17 @@ sequenceDiagram
 
   U->>A: "B's gateway keeps dropping tokens"
   A->>H: POST /v1/memory/notes {type: observation, about: [agent.beta], body: verbatim}
-  H->>H: markdown note → SQLite index + Qdrant vectors → inbox/agent.beta
+  H->>H: markdown note → SQLite FTS index → inbox/agent.beta
   Note over B: ...days later, B starts a session...
-  B->>H: GET /v1/memory/wakeup?agent=agent.beta
+  B->>H: GET /v1/memory/wakeup?consumerId=desktop.startup
   H-->>B: profile + unread inbox (the observation, with provenance)
-  Note over B: B now knows. It can also semantic-search this forever.
+  Note over B: B now has delimited, provenance-rich data and opt-in hybrid search.
 ```
 
 Memory sharing becomes **asynchronous message passing**: writing is delivery,
 querying is catching up. No agent has to be online at the same time as any other.
 
-## Today: the coordination hub (v1)
+## Current implemented surfaces
 
 Shipped, tested, dependency-free:
 
@@ -107,9 +108,14 @@ curl -s http://127.0.0.1:8787/v1/tasks \
 Full API reference in [docs/API.md](docs/API.md). Adapter contract in
 [docs/ADAPTERS.md](docs/ADAPTERS.md).
 
-## Next: the memory plane (v2, design preview)
+## Memory plane: 🧱 Foundation (opt-in)
 
-The full design is public — **[docs/DESIGN.md](docs/DESIGN.md)**. The short version:
+The full design is public — **[docs/DESIGN.md](docs/DESIGN.md)**. Durable memory is available
+only with `pip install -e ".[memory-core]"` and `serve --enable-memory`; it is
+off by default and preserves the coordination-only runtime. Delivery, task-log,
+and watcher repair remain separately gated. The foundation has repository-level
+end-to-end and restart/replay coverage; it is not a release, SLA, soak, or
+operational-readiness claim. The short version:
 
 **Three ingredients, deliberately boring:**
 
@@ -120,9 +126,9 @@ The full design is public — **[docs/DESIGN.md](docs/DESIGN.md)**. The short ve
    stored word-for-word (no LLM extraction at write time). Structure comes from
    explicit frontmatter and links. Temporal validity is an explicit
    `supersedes:` chain, not model guesswork.
-3. **Qdrant for retrieval.** Dense + sparse hybrid search with reciprocal rank
-   fusion, payload filters for visibility/scope/time, recency boost. Starts in
-   embedded local mode (zero ops), upgrades to a server by changing one URL.
+3. **Opt-in hybrid retrieval with FTS5 fallback.** Qdrant dense+sparse candidates
+   are authorization-filtered in every prefetch and authorized again against
+   Markdown. The default core remains dependency-free and keyword-only.
 
 **On top of that:**
 
@@ -131,16 +137,20 @@ The full design is public — **[docs/DESIGN.md](docs/DESIGN.md)**. The short ve
   ("who said what about whom, when, in which task") is a query, not an inference.
 - **Wake-up packs** — one call returns an agent's boot context: profile, unread
   inbox, recent relevant notes. Worst-case integration is `curl` + paste.
-- **Task-log sedimentation** — finished hub tasks automatically become memory
-  notes. Collaboration history accumulates even if no agent lifts a finger.
-- **Burn-the-index guarantee** — SQLite and Qdrant are derived artifacts. Delete
-  them, run `reindex`, lose nothing. Backup = backup your markdown.
+- **Task-log sedimentation** — when explicitly enabled for an allowlisted intent,
+  terminal hub tasks can become structured memory notes without raw payloads.
+- **Reference adapter + operator Skill** — a removable client adapter negotiates
+  identity/capabilities, inserts only delimited untrusted data, and acks only
+  after delivery. The packaged Skill provides doctor/smoke/install workflows.
+- **Burn-the-index guarantee** — the current FTS/KG SQLite index is derived.
+  Delete it and rebuild the same visible note/edge set from Markdown. Delivery,
+  ack, job, task, artifact, and auth state are separate authoritative backups.
 
 ## How it compares
 
 | | A2A task coordination | Durable shared memory | Knowledge graph + timeline | Offline inbox catch-up | Local-first, no API keys |
 |---|:-:|:-:|:-:|:-:|:-:|
-| **A2A Superhub (v1 + v2 design)** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **A2A Superhub (opt-in memory and retrieval foundation)** | ✅ | foundation | foundation | foundation | ✅ |
 | [mem0](https://github.com/mem0ai/mem0) — app↔user memory | — | ✅ | partial | — | partial |
 | [memX](https://github.com/MehulG/memX) — realtime shared state | — | — (ephemeral KV) | — | — | ✅ |
 | A2A registries — agent directories | discovery only | — | — | — | varies |
@@ -149,24 +159,41 @@ The full design is public — **[docs/DESIGN.md](docs/DESIGN.md)**. The short ve
 Memory frameworks remember *users*. State layers share *the present*. Superhub
 gives a fleet of peer agents a durable, queryable, **shared past**.
 
+“Foundation” above means implemented with repository end-to-end and restart/replay
+evidence. It does
+not mean protocol parity, public release, production deployment, or completed
+MCP/A2A 1.0 support.
+
 ## Roadmap
 
-- **M1** — Markdown store + SQLite index + FTS + memory inbox (async sharing works here, before vectors)
-- **M2** — Qdrant hybrid semantic retrieval + wake-up packs
-- **M3** — MCP server (`memory_*` tools) + first adapter wiring
-- **M4** — Multimodal derivers (OCR / caption / transcript → searchable)
-- **M5** — Retention, GC, ops runbooks
-- **M6** — Hub-to-hub memory federation
-- **C-track** — coordination hardening: SSE streaming, A2A Part-model payloads, chunked artifact upload, push notifications
+- **Contract and security baseline — 🧱 Foundation:** executable identity,
+  note, API, protocol, package, and Skill contracts.
+- **Durable memory and offline sharing — 🧱 Foundation (opt-in):** durable
+  Markdown, separated operational/derived stores, FTS, inbox/wakeup, a reference
+  adapter, and an operator Skill.
+- **Hybrid retrieval — 🧱 Foundation (opt-in):** Qdrant dense+sparse retrieval
+  with authorization pushdown and keyword fallback.
+- **Agent protocol integration — 📐 Design RFC:** stable MCP `memory_*` tools,
+  an A2A 1.0 runtime binding, a broader adapter matrix, and Skill drift CI.
+- **Multimodal derivation — 🗺 Planned:** OCR, captions, and transcripts become
+  searchable derived notes.
+- **Operational hardening — 🗺 Planned:** retention, garbage collection,
+  backup/restore runbooks, and workload-specific soak evidence.
+- **Hub federation — 🗺 Planned:** namespaced, explicitly trusted hub-to-hub
+  memory exchange.
+- **Coordination hardening — 🗺 Planned:** SSE streaming, A2A Part-model
+  payloads, chunked artifact upload, and push notifications.
 
 Details and acceptance criteria in the [RFC](docs/DESIGN.md).
 
 ## Status & contributing
 
-This project is **doc-first**: the v1 hub is real and tested; the v2 memory
-plane is a public design open for review before a line of it is built. The most
-useful contribution right now is criticism — read the
-[RFC](docs/DESIGN.md) and open an issue that starts with *"this breaks when…"*.
+This project is **contract-first**: coordination plus the opt-in durable-memory,
+offline-sharing, and hybrid-retrieval foundations are implemented and tested;
+the future protocol, multimodal, operational, and federation surfaces remain
+incomplete. Read the [RFC](docs/DESIGN.md), the
+[contract and security decisions](docs/CONTRACT_AND_SECURITY_DECISIONS.md), and the machine schemas before
+opening an issue that starts with *"this breaks when…"*.
 
 ## Security posture
 
@@ -178,12 +205,21 @@ provenance on every write. See [docs/SECURITY.md](docs/SECURITY.md).
 ## Development
 
 ```bash
-python -m unittest discover -s tests
+python -m pip install -e ".[contracts]"
+python -m unittest discover -s tests -v
 ```
 
-The v1 hub uses only the Python standard library at runtime. The memory plane
-will ship as an optional extra (`pip install a2a-superhub[memory]`) so the core
-stays dependency-free.
+This is the canonical clean-development command and is exercised on Windows and
+Linux with Python 3.11 and 3.12 in CI. The `contracts` extra contains test-only
+official A2A/MCP parsers and JSON Schema validation; the v1 hub still has zero
+runtime dependencies. Python 3.13 is not in the supported matrix yet.
+
+The packaging contract also defines `memory-core`, `search`, `mcp`, `derive`,
+and the `memory` umbrella extra. `memory-core` enables durable memory only when
+the server flag is also present. `search` installs the selected FastEmbed
+multilingual MiniLM + BM25 Qdrant provider; use explicit local/server search flags.
+`derive` is intentionally dependency-free until a deriver provider declares its
+own PDF/OCR/transcription stack. See [docs/PACKAGING.md](docs/PACKAGING.md).
 
 ## License
 

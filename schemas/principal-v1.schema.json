@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://phenomenoner.github.io/a2a-superhub/schemas/principal-v1.schema.json",
+  "title": "A2A Superhub authenticated principal v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["subject", "kind", "tokenId", "scopes"],
+  "properties": {
+    "subject": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$"
+    },
+    "kind": {"enum": ["agent", "human", "service", "operator"]},
+    "tokenId": {"type": "string", "pattern": "^tok_[a-z0-9][a-z0-9_-]{2,63}$"},
+    "scopes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "task.read", "task.write", "artifact.read", "artifact.write",
+          "memory.read", "memory.write", "memory.share", "memory.admin", "hub.admin"
+        ]
+      }
+    }
+  }
+}

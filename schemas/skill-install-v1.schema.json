@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://a2a-superhub.local/schemas/skill-install-v1.schema.json",
+  "title": "A2A Superhub Skill installer ownership manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "installer", "skill", "productVersion", "files"],
+  "properties": {
+    "schema": {"const": "a2a-superhub.skill-install.v1"},
+    "installer": {"const": "a2a-superhub"},
+    "skill": {"const": "operate-a2a-superhub"},
+    "productVersion": {"type": "string", "minLength": 1},
+    "files": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+    }
+  }
+}

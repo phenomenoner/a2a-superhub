@@ -22,6 +22,33 @@ classifiers = [
 ]
 dependencies = []
 
+[project.optional-dependencies]
+memory-core = [
+  "PyYAML==6.0.3",
+  "watchdog==6.0.0",
+]
+search = [
+  "qdrant-client[fastembed]==1.18.0",
+]
+mcp = [
+  "mcp==1.28.1",
+]
+# Deriver implementations own their media-specific dependencies. Keeping this
+# extra intentionally empty reserves the stable install name without selecting
+# a PDF/OCR/transcription stack before multimodal derivation's provider contract is ratified.
+derive = []
+memory = [
+  "PyYAML==6.0.3",
+  "watchdog==6.0.0",
+  "qdrant-client[fastembed]==1.18.0",
+  "mcp==1.28.1",
+]
+contracts = [
+  "a2a-sdk==1.1.1",
+  "jsonschema==4.26.0",
+  "mcp==1.28.1",
+]
+
 [project.scripts]
 a2a-superhub = "a2a_superhub.cli:main"
 

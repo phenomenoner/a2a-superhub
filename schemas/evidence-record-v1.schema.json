@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://phenomenoner.github.io/a2a-superhub/schemas/evidence-record-v1.schema.json",
+  "title": "A2A Superhub verification evidence record v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["capabilityId", "commitSha", "platform", "python", "dependencies", "command", "startedAt", "finishedAt", "verificationLevel", "result", "scenarioIds", "sanitizationStatus", "openGaps"],
+  "properties": {
+    "capabilityId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+    "commitSha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "platform": {"type": "string", "minLength": 1},
+    "python": {"type": "string", "pattern": "^3\\.(11|12)\\.[0-9]+$"},
+    "dependencies": {"type": "object", "additionalProperties": {"type": "string"}},
+    "command": {"type": "string", "minLength": 1},
+    "startedAt": {"type": "string", "format": "date-time"},
+    "finishedAt": {"type": "string", "format": "date-time"},
+    "verificationLevel": {"enum": ["mechanism", "unit", "integration", "scenario-replay", "live-soak"]},
+    "result": {"enum": ["pass", "fail", "blocked"]},
+    "scenarioIds": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "sanitizationStatus": {"enum": ["sanitized", "synthetic", "private-not-publishable"]},
+    "openGaps": {"type": "array", "items": {"type": "string"}}
+  }
+}

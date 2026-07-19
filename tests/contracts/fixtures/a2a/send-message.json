@@ -1,0 +1,13 @@
+{
+  "message": {
+    "messageId": "msg_contract_001",
+    "role": "ROLE_USER",
+    "parts": [
+      {"text": "Store a versioned handoff reference."},
+      {"raw": "AAEC", "filename": "sample.bin", "mediaType": "application/octet-stream"},
+      {"url": "https://example.invalid/artifacts/demo", "filename": "demo.txt", "mediaType": "text/plain"},
+      {"data": {"operation": "memory.note.reference", "noteId": "mem_0123456789abcdef0123456789abcdef"}}
+    ],
+    "extensions": ["https://phenomenoner.github.io/a2a-superhub/ext/shared-memory/v1"]
+  }
+}

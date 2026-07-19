@@ -1,0 +1,5 @@
+include setup.py
+recursive-include skills/operate-a2a-superhub *.md *.json *.yaml *.py
+recursive-include schemas *.json
+include tests/contracts/fixtures/a2a/agent-card.json
+include tests/contracts/fixtures/a2a/send-message.json

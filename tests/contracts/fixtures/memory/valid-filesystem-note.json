@@ -1,0 +1,11 @@
+{
+  "schema": "a2a-superhub.memory.note.v1",
+  "id": "mem_11111111111111111111111111111111",
+  "type": "note",
+  "title": "Local operator note",
+  "author": "local.operator",
+  "visibility": "private",
+  "recordedAt": "2026-07-19T10:01:00Z",
+  "source": {"kind": "filesystem", "relativePath": "private/local-note.md"},
+  "body": "Semantic body text is preserved using canonical UTF-8 and LF."
+}
