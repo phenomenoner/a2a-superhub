@@ -30,7 +30,7 @@ Breaking these contracts requires an explicit API, schema, or capability version
 | Tenant model | Room ACL and hostile multi-tenant isolation are outside the current single-operator trust domain. | Stop expansion and design an explicit tenant/ACL model before cross-team use. |
 | Note mutation | Notes use immutable POST. Arbitrary body PATCH is absent. | Add only a separately versioned, `If-Match`-guarded metadata endpoint after review. |
 | Local vector mode | Embedded Qdrant is a zero-operations pilot. The local-to-server decision uses measured latency, build time, RSS, and derived-index bytes rather than a magic point count. | Remain keyword-only. |
-| Adapter scope | One removable reference adapter and one packaged operator Skill prove the vertical slice. A broader MCP/adapter matrix remains future work. | Keep the server usable without claiming cross-runtime integration. |
+| Adapter scope | One removable reference adapter, one stateless MCP sidecar, and one packaged operator Skill prove the cross-runtime slice. Additional runtime-specific adapters remain future work. | Keep the server usable while sharing one HTTP authorization and policy boundary. |
 | Skill distribution | `skills/operate-a2a-superhub/` ships with source and wheel artifacts and is checked for contract drift. | Block distribution if the Skill and product surface diverge. |
 | Private backup | Memory is never git-pushed automatically. Backup defaults to local/encrypted destinations; public targets require explicit opt-in. | Disable product-managed backup. |
 | Federation | Hub-to-hub federation remains disabled until same-operator trust, namespaced identities, and operational evidence exist. | Keep hubs isolated. |

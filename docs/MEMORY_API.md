@@ -1,13 +1,13 @@
 # Memory API v1 contract
 
-Status: **🧱 Foundation + hybrid search (opt-in)** — the memory foundation,
+Status: **✅ MCP-integrated foundation + hybrid search (opt-in)** — the memory foundation,
 reference adapter, operator Skill, and hybrid retrieval provider are implemented
 behind opt-in runtime flags and explicit Skill install.
 Markdown create/read/search, FTS5, durable multi-consumer inbox, timeline/graph,
 safe wakeup, sanitized receipts/stats, watcher repair, and task-log sedimentation
 are implemented. Hybrid retrieval is available through the `search` extra in
-Qdrant local or explicit-server mode. MCP and an A2A 1.0 runtime binding remain
-absent.
+Qdrant local or explicit-server mode. The MCP stdio sidecar is implemented; an
+A2A 1.0 runtime binding remains absent.
 The machine authority is `schemas/memory-api-v1.schema.json`; canonical examples
 live under `tests/contracts/fixtures/api/`.
 
@@ -51,8 +51,10 @@ The default runtime leaves the foundation disabled and returns no memory route.
 Install `.[memory-core]` and pass `serve --enable-memory`. Delivery, task-log,
 and watcher writes additionally require `--enable-delivery`, `--enable-task-log`
 with one or more `--task-log-intent`, and `--enable-watcher-side-effects`.
-All three default off. The full `features.memory` capability remains false
-because MCP is not implemented. Hybrid search defaults to keyword-only unless
+All three default off. The product-level `features.memory` capability is true,
+while each running HTTP instance still reports granular flags and keeps
+`memoryFull` false rather than implying that every optional side effect or
+sidecar is enabled. Hybrid search defaults to keyword-only unless
 the `search` extra is installed and `--search-mode local` or `--search-mode
 server --search-url URL` is explicit. Build or resume the derived index with
 `memory search-reindex`; this never replaces Markdown or the ops/ack database.

@@ -24,6 +24,44 @@ class SessionAuthorizationError(AdapterError):
     pass
 
 
+@dataclass(frozen=True)
+class AgentTransportSelection:
+    transport: str
+    resource_refresh: str
+    compatibility: str
+    read_only: bool
+
+
+def select_agent_transport(
+    *,
+    mcp_protocol_version: str | None,
+    mcp_resources_subscribe: bool = False,
+    http_compatibility: str = "current",
+) -> AgentTransportSelection:
+    """Choose a negotiated agent path without inferring unsupported MCP features."""
+
+    if mcp_protocol_version == "2025-11-25":
+        return AgentTransportSelection(
+            transport="mcp",
+            resource_refresh="subscribe" if mcp_resources_subscribe else "poll",
+            compatibility="current",
+            read_only=False,
+        )
+    if http_compatibility == "n-1-read-only":
+        return AgentTransportSelection(
+            transport="http",
+            resource_refresh="poll",
+            compatibility="n-1-read-only",
+            read_only=True,
+        )
+    return AgentTransportSelection(
+        transport="http",
+        resource_refresh="poll",
+        compatibility="current",
+        read_only=False,
+    )
+
+
 _LINK_ID = re.compile(r"[A-Za-z0-9._:-]{1,200}")
 
 

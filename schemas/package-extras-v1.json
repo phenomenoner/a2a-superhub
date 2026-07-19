@@ -22,8 +22,8 @@
     },
     "mcp": {
       "dependencies": ["mcp==1.28.1"],
-      "purpose": "Official MCP SDK seam pinned to protocol 2025-11-25.",
-      "runtimeImplemented": false
+      "purpose": "Stateless MCP stdio sidecar with ten tools, authorized resources, and negotiated subscriptions.",
+      "runtimeImplemented": true
     },
     "derive": {
       "dependencies": [],

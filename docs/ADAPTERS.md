@@ -67,6 +67,8 @@ integration boundary. The server core does not import it.
 - A legacy Agent Card is read-only discovery. Auth, connection, feature, role,
   and scope mismatches fail distinctly.
 
-This adapter does not implement task submission, cancellation, MCP, A2A 1.0,
-or destructive operator actions. It can request the server's advertised search
+This session adapter does not implement task submission, cancellation, A2A 1.0,
+or destructive operator actions. MCP is provided by the separate stateless
+sidecar documented in [MCP_AGENT_INTEGRATION.md](MCP_AGENT_INTEGRATION.md), so
+either component can be removed without changing server state. It can request the server's advertised search
 mode but does not own the retrieval provider.

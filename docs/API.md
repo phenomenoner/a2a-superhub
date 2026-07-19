@@ -5,8 +5,8 @@ A2A Superhub exposes a compact JSON API plus a minimal JSON-RPC A2A facade.
 This file documents the coordination runtime and opt-in durable-memory,
 offline-sharing, and hybrid-retrieval foundations.
 The complete memory.v1 contract is in [MEMORY_API.md](MEMORY_API.md). Inbox,
-wakeup, task-log sedimentation, the reference adapter, and operator Skill are
-implemented; MCP and an A2A 1.0 runtime binding remain absent.
+wakeup, task-log sedimentation, the reference adapter, operator Skill, and MCP
+stdio sidecar are implemented. An A2A 1.0 runtime binding remains absent.
 
 ## Public endpoints
 
@@ -50,6 +50,21 @@ timeline/graph, and stats. The separate `skill` commands expose path,
 validation, contained install, and ownership-aware uninstall. Reindex builds a
 new derived-index generation and atomically swaps it; it never rebuilds or
 deletes the ops database.
+
+## MCP sidecar
+
+Install `.[mcp]` and launch `a2a-superhub-mcp`. The sidecar reads
+`A2A_SUPERHUB_URL` and `A2A_SUPERHUB_TOKEN`, speaks MCP `2025-11-25` over stdio,
+and delegates every operation to these HTTP endpoints. It exposes ten tools:
+`memory_write`, `memory_search`, `memory_read`, `memory_timeline`,
+`memory_graph`, `memory_wakeup`, `memory_inbox`, `memory_inbox_ack`,
+`task_create`, and `task_status`.
+
+`memory://note/{id}` and `memory://wakeup/{agent}` are authorized JSON resources.
+The sidecar advertises resource subscriptions and emits updated notifications
+when the underlying HTTP view changes. Clients without subscription support
+poll `resources/read`. Tool annotations describe effects but never replace hub
+authentication, scopes, current visibility checks, or idempotency.
 
 ## Agents
 

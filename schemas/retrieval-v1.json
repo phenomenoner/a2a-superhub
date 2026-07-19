@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://a2a-superhub.example/schemas/retrieval-v1.json",
+  "$id": "https://phenomenoner.github.io/a2a-superhub/schemas/retrieval-v1.json",
   "title": "A2A Superhub retrieval manifest",
   "type": "object",
   "additionalProperties": false,

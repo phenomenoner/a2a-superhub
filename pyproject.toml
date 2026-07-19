@@ -51,6 +51,7 @@ contracts = [
 
 [project.scripts]
 a2a-superhub = "a2a_superhub.cli:main"
+a2a-superhub-mcp = "a2a_superhub.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

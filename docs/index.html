@@ -6,7 +6,7 @@
 <title>A2A Superhub — coordination + shared memory for AI agent fleets</title>
 <meta name="description" content="A durable, local-first coordination hub for heterogeneous AI agents — with a shared memory plane where collaboration history becomes knowledge any agent can query. Even the ones that were offline.">
 <meta property="og:title" content="A2A Superhub — your agents collaborate. Now they remember.">
-<meta property="og:description" content="Durable A2A coordination plus opt-in Markdown memory and FastEmbed/Qdrant hybrid retrieval. MCP and A2A 1.0 remain future RFC scope.">
+<meta property="og:description" content="Durable A2A coordination plus opt-in Markdown memory, hybrid retrieval, and a stateless MCP agent sidecar.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://phenomenoner.github.io/a2a-superhub/">
 <meta name="theme-color" content="#07090e">
@@ -216,13 +216,13 @@ html.js .rv.on{opacity:1;transform:none}
 
 <header class="hero" id="top">
   <div class="wrap">
-    <span class="kicker">open source · mit · local-first · <b>memory and retrieval foundation opt-in · future RFC open</b></span>
+    <span class="kicker">open source · mit · local-first · <b>shared memory + MCP integration · opt-in</b></span>
     <h1>Your agents collaborate.<br><span class="fade">Then they</span> <span class="mem">forget everything.</span></h1>
     <p class="lead">A2A Superhub is a durable coordination hub for heterogeneous AI agents —
     with a shared <strong>memory plane</strong> where collaboration history becomes knowledge
     any agent can query. Even the agents that were offline when it happened.</p>
     <div class="cta-row">
-      <a class="btn primary" href="https://github.com/phenomenoner/a2a-superhub/blob/main/docs/DESIGN.md">See the foundation + future RFC</a>
+      <a class="btn primary" href="https://github.com/phenomenoner/a2a-superhub/blob/main/docs/MCP_AGENT_INTEGRATION.md">Connect an MCP agent</a>
       <a class="btn" href="https://github.com/phenomenoner/a2a-superhub">Star on GitHub</a>
     </div>
     <p class="microcopy">$ pip install a2a-superhub&nbsp;&nbsp;# zero runtime dependencies</p>
@@ -433,7 +433,7 @@ Tokens were not restored after the controlled restart.</pre>
           <th>knowledge graph + timeline</th><th>offline inbox catch-up</th><th>local-first, no API keys</th>
         </tr></thead>
         <tbody>
-          <tr class="hero-row"><td>A2A Superhub<small>v1 shipped + opt-in memory/retrieval foundation + future RFC</small></td>
+          <tr class="hero-row"><td>A2A Superhub<small>v1 coordination + opt-in shared memory, retrieval, and MCP</small></td>
             <td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td></tr>
           <tr><td>mem0<small>app ↔ user memory layer</small></td>
             <td class="no">—</td><td class="yes">✓</td><td class="part">partial</td><td class="no">—</td><td class="part">partial</td></tr>
@@ -463,9 +463,9 @@ Tokens were not restored after the controlled restart.</pre>
         Async sharing works here — before vectors.</p></div>
       <div class="ms warm rv"><span class="m">foundation · opt-in</span><h4>Qdrant hybrid retrieval</h4>
         <p>Dense + sparse + rank fusion, recency boost, visibility as filter pushdown.</p></div>
-      <div class="ms warm rv"><span class="m">design RFC</span><h4>Agent protocol integration</h4>
-        <p>Stable <code>memory_*</code> tools, <code>memory://</code> resources, and
-        multiple runtime adapters beyond the current removable reference adapter.</p></div>
+      <div class="ms warm rv"><span class="m">implemented · opt-in</span><h4>MCP agent integration</h4>
+        <p>Ten stable memory/task tools, authorized <code>memory://</code> resources,
+        subscription notifications, and polling fallback.</p></div>
       <div class="ms warm rv"><span class="m">planned</span><h4>Multimodal derivation</h4>
         <p>OCR / caption / transcript → searchable text, linked back to artifacts.</p></div>
       <div class="ms warm rv"><span class="m">planned</span><h4>Operational hardening</h4>
@@ -481,11 +481,11 @@ Tokens were not restored after the controlled restart.</pre>
 
 <section class="cta">
   <div class="wrap">
-    <span class="kicker">foundation + future RFC</span>
-    <h2>The foundation is implemented. Tear the future design apart.</h2>
-    <p class="lead">The v1 hub is shipped; memory and hybrid retrieval are opt-in with
-    repository end-to-end and restart/replay evidence.
-    MCP and A2A 1.0 remain open RFC scope — the most useful contribution is criticism that starts with
+    <span class="kicker">implemented surface + future RFC</span>
+    <h2>Shared memory now speaks MCP. Tear the remaining design apart.</h2>
+    <p class="lead">The v1 hub is shipped; memory, hybrid retrieval, and MCP are opt-in with
+    official-SDK, cross-transport, end-to-end, and restart/replay evidence.
+    A2A 1.0 remains open RFC scope — the most useful contribution is criticism that starts with
     <em>"this breaks when…"</em></p>
     <div class="cta-row" style="justify-content:center">
       <a class="btn primary" href="https://github.com/phenomenoner/a2a-superhub/blob/main/docs/DESIGN.md">Read the RFC</a>

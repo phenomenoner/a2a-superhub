@@ -1,7 +1,7 @@
 {
   "contract": "a2a-superhub.agent-surface.v1",
   "productBaseline": "0.1.0",
-  "status": "hybrid-search-foundation",
+  "status": "agent-protocol-integration",
   "packageExtrasContract": "a2a-superhub.package-extras.v1",
   "apiVersions": ["memory.v1"],
   "noteSchemas": ["a2a-superhub.memory.note.v1"],
@@ -9,9 +9,9 @@
     {"binding": "JSONRPC", "protocolVersion": "legacy", "implemented": true},
     {"binding": "JSONRPC", "protocolVersion": "1.0", "implemented": false}
   ],
-  "mcp": {"protocolVersion": "2025-11-25", "surfaceVersion": "memory.v1", "implemented": false},
+  "mcp": {"protocolVersion": "2025-11-25", "surfaceVersion": "memory.v1", "implemented": true},
   "features": {
-    "memory": false,
+    "memory": true,
     "memoryFoundation": true,
     "memoryDefaultEnabled": false,
     "keywordSearch": true,
@@ -21,7 +21,7 @@
     "qdrantLocal": true,
     "qdrantServer": true,
     "keywordFallback": true,
-    "mcp": false,
+    "mcp": true,
     "multiConsumerInbox": true,
     "safeWakeup": true,
     "referenceAdapter": true,
@@ -41,7 +41,7 @@
   },
   "cli": {
     "manifestRevision": 4,
-    "implemented": ["init", "serve", "task-create", "task-get", "task-list", "task-cancel", "event-add", "artifact-put", "artifact-get", "agent-register", "agent-list", "memory-note-create", "memory-note-read", "memory-reindex", "memory-search", "memory-search-reindex", "memory-inbox-fetch", "memory-inbox-ack", "memory-wakeup", "memory-timeline", "memory-graph", "memory-stats", "skill-path", "skill-validate", "skill-install-codex", "skill-uninstall-codex"],
-    "planned": ["memory-mcp"]
+    "implemented": ["init", "serve", "task-create", "task-get", "task-list", "task-cancel", "event-add", "artifact-put", "artifact-get", "agent-register", "agent-list", "memory-note-create", "memory-note-read", "memory-reindex", "memory-search", "memory-search-reindex", "memory-inbox-fetch", "memory-inbox-ack", "memory-wakeup", "memory-timeline", "memory-graph", "memory-stats", "memory-mcp", "skill-path", "skill-validate", "skill-install-codex", "skill-uninstall-codex"],
+    "planned": []
   }
 }

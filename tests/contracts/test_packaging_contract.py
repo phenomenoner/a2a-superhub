@@ -53,6 +53,13 @@ class PackagingContractTests(unittest.TestCase):
         self.assertFalse(derive["runtimeImplemented"])
         self.assertIn("provider", derive["deferredDependencyContract"].casefold())
 
+    def test_mcp_extra_has_a_real_runtime_entry_point(self) -> None:
+        mcp = self.contract["extras"]["mcp"]
+        self.assertTrue(mcp["runtimeImplemented"])
+        self.assertEqual(["mcp==1.28.1"], mcp["dependencies"])
+        scripts = self.pyproject["project"]["scripts"]
+        self.assertEqual("a2a_superhub.mcp_server:main", scripts["a2a-superhub-mcp"])
+
     def test_selected_extra_imports_in_fresh_environment(self) -> None:
         selected = os.environ.get("A2A_TEST_EXTRA")
         if not selected:

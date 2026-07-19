@@ -49,6 +49,9 @@ class SkillScriptTests(unittest.TestCase):
                 self.assertTrue(payload["ok"])
                 self.assertTrue(payload["readOnly"])
                 self.assertEqual(payload["compatibility"], "current")
+                self.assertEqual(payload["transport"]["selected"], "mcp")
+                self.assertEqual(payload["transport"]["resourceRefresh"], "subscribe")
+                self.assertEqual(10, len(payload["transport"]["mcp"]["tools"]))
             finally:
                 server.shutdown()
                 thread.join(timeout=5)

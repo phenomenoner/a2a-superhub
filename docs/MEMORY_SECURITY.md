@@ -1,8 +1,8 @@
 # Memory security and durability contract
 
 Status: runtime contract for durable memory, offline sharing, the reference
-adapter, operator Skill, and hybrid retrieval. MCP and an A2A 1.0 runtime
-binding remain outside the implemented surface.
+adapter, operator Skill, hybrid retrieval, and MCP stdio sidecar. An A2A 1.0
+runtime binding remains outside the implemented surface.
 
 ## Authority and truth
 

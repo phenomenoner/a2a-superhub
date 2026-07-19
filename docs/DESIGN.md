@@ -1,11 +1,11 @@
 # A2A Superhub v2 — Shared Memory Plane (Design RFC)
 
-Status: **🧱 Foundation (opt-in)** for durable memory, offline sharing, and
+Status: **✅ MCP-integrated foundation (opt-in)** for durable memory, offline sharing, and
 hybrid retrieval — Markdown/ops/index, FTS5,
 inbox/wakeup, task-log sedimentation, the reference adapter, operator Skill,
-and Qdrant hybrid retrieval are implemented. **📐 Design RFC** covers future
-MCP and an A2A 1.0 runtime binding.
-Last updated: 2026-07-19
+and Qdrant hybrid retrieval, and the stateless MCP sidecar are implemented.
+**📐 Design RFC** covers a future A2A 1.0 runtime binding.
+Last updated: 2026-07-20
 Feedback: open a GitHub issue, ideally one that starts with *"this breaks when…"*.
 
 > **Contract and security amendment:** executable schemas and adopted decisions live
@@ -14,9 +14,9 @@ Feedback: open a GitHub issue, ideally one that starts with *"this breaks when�
 > They correct this conceptual RFC where identity, truth stores, durability,
 > authorization, or protocol details differ. The implemented opt-in foundation includes the
 > Markdown/ops/derived-index foundation, FTS5, inbox/wakeup, task-log
-> sedimentation, the removable reference adapter, operator Skill, and hybrid
-> retrieval with keyword fallback. MCP
-> and an A2A 1.0 runtime binding remain future work.
+> sedimentation, the removable reference adapter, operator Skill, hybrid
+> retrieval with keyword fallback, and MCP 2025-11-25 stdio integration. An
+> A2A 1.0 runtime binding remains future work.
 
 ## 1. Vision
 
@@ -374,7 +374,8 @@ concurrent connections.
 | **Contract and security baseline** | 🧱 Foundation | Versioned note, identity, authorization, API, protocol, package, and Skill contracts; schemas validate and negative cases fail closed. |
 | **Durable memory and offline sharing** | 🧱 Foundation (opt-in) | Markdown truth, SQLite operational/derived stores, FTS, inbox, timeline/graph, wakeup, and task-log sedimentation; restart/rebuild, visibility, cursor, and supersede scenarios pass. |
 | **Hybrid retrieval** | 🧱 Foundation (opt-in) | Qdrant dense+sparse retrieval, recency boost, authorization filters, local/server modes, and keyword fallback; fixed-corpus quality and interruption/recovery scenarios pass. |
-| **Agent protocol integration** | 📐 Design RFC | Stable MCP `memory_*` tools, an A2A 1.0 runtime binding, and a broader adapter matrix; requires an end-to-end standards interop demonstration. |
+| **MCP agent integration** | ✅ Implemented (opt-in) | Ten stable tools, authorized `memory://` resources, negotiated subscription/poll refresh, and HTTP↔MCP offline restart scenarios through the official SDK. |
+| **A2A 1.0 runtime binding** | 📐 Design RFC | A standards-compliant binding remains separate from the implemented legacy JSON-RPC facade. |
 | **Multimodal derivation** | 🗺 Planned | PDF text, OCR, captions, and transcripts become derived notes; search must resolve a derivation back to its source artifact. |
 | **Operational hardening** | 🗺 Planned | Retention, garbage collection, backup/restore runbooks, workload sizing, and long-running soak evidence. |
 | **Hub federation** | 🗺 Planned | Namespaced hub-to-hub memory exchange with explicit same-operator trust and isolation evidence. |

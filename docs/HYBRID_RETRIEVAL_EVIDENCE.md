@@ -96,3 +96,10 @@ and 4 expected platform/selected-provider tests skipped in 70.665 seconds. The
 public-hygiene scan returned zero hits, all schema JSON parsed, the
 self-contained site parsed with 28 reveal nodes and zero external
 script/image/link assets, and `git diff --check` reported no errors.
+
+On 2026-07-20, a fail-first public-contract regression exposed that the
+retrieval schema still used a placeholder example-domain `$id`. The schema now
+uses its canonical GitHub Pages URL, the operator Skill fingerprint was updated,
+and the dependency-complete Python 3.12 suite passed 122 tests with 4 expected
+selected-provider/platform skips in 91.506 seconds. The focused schema and Skill
+contract pack passed 8/8, and the public-hygiene scan remained at zero hits.

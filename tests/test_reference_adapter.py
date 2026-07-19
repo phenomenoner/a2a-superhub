@@ -1,10 +1,12 @@
 import unittest
 
 from a2a_superhub.adapter import (
+    AgentTransportSelection,
     CapabilityMismatchError,
     ReferenceAdapter,
     RoleBoundaryError,
     SessionAuthorizationError,
+    select_agent_transport,
 )
 
 
@@ -50,6 +52,26 @@ class FakeClient:
 
 
 class ReferenceAdapterTests(unittest.TestCase):
+    def test_transport_selection_negotiates_subscription_poll_and_n_minus_one(self):
+        self.assertEqual(
+            AgentTransportSelection("mcp", "subscribe", "current", False),
+            select_agent_transport(
+                mcp_protocol_version="2025-11-25", mcp_resources_subscribe=True
+            ),
+        )
+        self.assertEqual(
+            AgentTransportSelection("mcp", "poll", "current", False),
+            select_agent_transport(
+                mcp_protocol_version="2025-11-25", mcp_resources_subscribe=False
+            ),
+        )
+        self.assertEqual(
+            AgentTransportSelection("http", "poll", "n-1-read-only", True),
+            select_agent_transport(
+                mcp_protocol_version=None, http_compatibility="n-1-read-only"
+            ),
+        )
+
     def test_system_role_is_rejected_before_delivery_or_ack(self):
         client = FakeClient()
         adapter = ReferenceAdapter(client, principal="agent.beta", consumer_id="cold-start")

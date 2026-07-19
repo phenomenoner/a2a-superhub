@@ -3,17 +3,17 @@
 > **Your agents collaborate. Then they forget everything.**
 >
 > A2A Superhub is a durable coordination hub for heterogeneous AI agents — with a
-> shared **memory plane** (opt-in durable memory, offline sharing, and hybrid
-> retrieval foundations) where collaboration history becomes knowledge
+> shared **memory plane** (opt-in durable memory, offline sharing, hybrid
+> retrieval, and a standards-based MCP sidecar) where collaboration history becomes knowledge
 > any agent can query. Even the agents that were offline when it happened.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-3776ab.svg)](pyproject.toml)
 [![Runtime deps](https://img.shields.io/badge/runtime%20deps-zero-brightgreen.svg)](pyproject.toml)
-[![Memory plane](https://img.shields.io/badge/memory%20plane-foundation%20opt--in-f59e0b.svg)](docs/DESIGN.md)
+[![Memory plane](https://img.shields.io/badge/memory%20plane-MCP%20integrated-16a34a.svg)](docs/DESIGN.md)
 
 **[Product site](https://phenomenoner.github.io/a2a-superhub/)** ·
-**[Memory and retrieval foundation + future RFC](docs/DESIGN.md)** ·
+**[Shared memory design and implemented surfaces](docs/DESIGN.md)** ·
 [API](docs/API.md) · [Adapters](docs/ADAPTERS.md) · [Security](docs/SECURITY.md)
 
 ---
@@ -37,7 +37,7 @@ Superhub attacks all three with one small, local-first hub.
 | Plane | Status | What it gives you |
 |---|---|---|
 | **Coordination plane** | ✅ Shipped (v1) | Durable task lifecycle, progress events, content-addressed artifacts, Agent Card registry, idempotency, bearer auth, rate limits. Dependency-free Python + SQLite. |
-| **Memory plane** | 🧱 Foundation + hybrid search (opt-in) + [future design](docs/DESIGN.md) | Implemented Markdown truth, durable ops queue, FTS5 fallback, FastEmbed/Qdrant hybrid retrieval, authorized timeline/graph, multi-consumer inbox, safe wakeup, task-log, reference adapter, and operator Skill. MCP, an A2A 1.0 runtime binding, and operational readiness remain future work. |
+| **Memory plane** | ✅ MCP-integrated foundation (opt-in) + [future design](docs/DESIGN.md) | Implemented Markdown truth, durable ops queue, FTS5 fallback, FastEmbed/Qdrant hybrid retrieval, authorized timeline/graph, multi-consumer inbox, safe wakeup, task-log, a stateless 10-tool MCP stdio sidecar, reference adapter, and operator Skill. A2A 1.0, multimodal derivation, and operational readiness remain future work. |
 
 Agents remain peers, not children of a central framework. The hub owns
 cross-agent semantics; adapters own local runtime integration.
@@ -71,7 +71,7 @@ querying is catching up. No agent has to be online at the same time as any other
 
 ## Current implemented surfaces
 
-Shipped, tested, dependency-free:
+Shipped and tested; the coordination core remains dependency-free:
 
 - Standalone state root with SQLite task and event storage.
 - Task create / get / list / cancel / event operations with idempotency keys.
@@ -80,6 +80,8 @@ Shipped, tested, dependency-free:
 - Minimal JSON-RPC A2A facade: `message/send`, `tasks/get`, `tasks/cancel`.
 - Optional bearer-token auth and per-client rate limiting.
 - CLI and HTTP server, Python standard library only.
+- Optional MCP 2025-11-25 stdio sidecar with ten memory/task tools, authorized
+  resources, subscription notifications, and polling fallback guidance.
 
 ### Quickstart
 
@@ -106,7 +108,25 @@ curl -s http://127.0.0.1:8787/v1/tasks \
 ```
 
 Full API reference in [docs/API.md](docs/API.md). Adapter contract in
-[docs/ADAPTERS.md](docs/ADAPTERS.md).
+[docs/ADAPTERS.md](docs/ADAPTERS.md). MCP setup and exact behavior are in
+[docs/MCP_AGENT_INTEGRATION.md](docs/MCP_AGENT_INTEGRATION.md).
+
+### Connect an MCP client
+
+Keep the HTTP hub running with memory enabled, then configure the client to
+launch the stateless sidecar:
+
+```bash
+pip install -e ".[memory-core,mcp]"
+export A2A_SUPERHUB_URL=http://127.0.0.1:8787
+export A2A_SUPERHUB_TOKEN=replace-with-a-token-handle
+a2a-superhub-mcp
+```
+
+On Windows PowerShell, set the variables with `$env:A2A_SUPERHUB_URL=...` and
+`$env:A2A_SUPERHUB_TOKEN=...`. The token belongs in the environment, not in the
+MCP command line. Each sidecar holds no hub state and can be restarted or run
+alongside other clients.
 
 ## Memory plane: 🧱 Foundation (opt-in)
 
@@ -139,7 +159,8 @@ operational-readiness claim. The short version:
   inbox, recent relevant notes. Worst-case integration is `curl` + paste.
 - **Task-log sedimentation** — when explicitly enabled for an allowlisted intent,
   terminal hub tasks can become structured memory notes without raw payloads.
-- **Reference adapter + operator Skill** — a removable client adapter negotiates
+- **MCP sidecar + reference adapter + operator Skill** — ten stable tools and
+  two `memory://` resources reuse the HTTP authorization boundary; a removable client adapter negotiates
   identity/capabilities, inserts only delimited untrusted data, and acks only
   after delivery. The packaged Skill provides doctor/smoke/install workflows.
 - **Burn-the-index guarantee** — the current FTS/KG SQLite index is derived.
@@ -150,7 +171,7 @@ operational-readiness claim. The short version:
 
 | | A2A task coordination | Durable shared memory | Knowledge graph + timeline | Offline inbox catch-up | Local-first, no API keys |
 |---|:-:|:-:|:-:|:-:|:-:|
-| **A2A Superhub (opt-in memory and retrieval foundation)** | ✅ | foundation | foundation | foundation | ✅ |
+| **A2A Superhub (opt-in shared memory with MCP)** | ✅ | ✅ | ✅ | ✅ | ✅ |
 | [mem0](https://github.com/mem0ai/mem0) — app↔user memory | — | ✅ | partial | — | partial |
 | [memX](https://github.com/MehulG/memX) — realtime shared state | — | — (ephemeral KV) | — | — | ✅ |
 | A2A registries — agent directories | discovery only | — | — | — | varies |
@@ -159,10 +180,9 @@ operational-readiness claim. The short version:
 Memory frameworks remember *users*. State layers share *the present*. Superhub
 gives a fleet of peer agents a durable, queryable, **shared past**.
 
-“Foundation” above means implemented with repository end-to-end and restart/replay
-evidence. It does
-not mean protocol parity, public release, production deployment, or completed
-MCP/A2A 1.0 support.
+The implemented surface has repository end-to-end, restart/replay, official MCP
+SDK, and cross-transport evidence. It does not mean A2A 1.0 parity, production
+deployment, operational soak, or multimodal support.
 
 ## Roadmap
 
@@ -173,8 +193,11 @@ MCP/A2A 1.0 support.
   adapter, and an operator Skill.
 - **Hybrid retrieval — 🧱 Foundation (opt-in):** Qdrant dense+sparse retrieval
   with authorization pushdown and keyword fallback.
-- **Agent protocol integration — 📐 Design RFC:** stable MCP `memory_*` tools,
-  an A2A 1.0 runtime binding, a broader adapter matrix, and Skill drift CI.
+- **MCP agent integration — ✅ Implemented (opt-in):** ten stable memory/task
+  tools, authorized resources, negotiated subscriptions with poll fallback,
+  cross-transport scenarios, and Skill/product drift CI.
+- **A2A 1.0 runtime binding — 📐 Design RFC:** a standards-compliant binding
+  remains separate from the legacy JSON-RPC coordination facade.
 - **Multimodal derivation — 🗺 Planned:** OCR, captions, and transcripts become
   searchable derived notes.
 - **Operational hardening — 🗺 Planned:** retention, garbage collection,
@@ -188,9 +211,9 @@ Details and acceptance criteria in the [RFC](docs/DESIGN.md).
 
 ## Status & contributing
 
-This project is **contract-first**: coordination plus the opt-in durable-memory,
-offline-sharing, and hybrid-retrieval foundations are implemented and tested;
-the future protocol, multimodal, operational, and federation surfaces remain
+This project is **contract-first**: coordination plus opt-in durable memory,
+offline sharing, hybrid retrieval, and MCP agent integration are implemented and tested;
+the A2A 1.0, multimodal, operational, and federation surfaces remain
 incomplete. Read the [RFC](docs/DESIGN.md), the
 [contract and security decisions](docs/CONTRACT_AND_SECURITY_DECISIONS.md), and the machine schemas before
 opening an issue that starts with *"this breaks when…"*.
@@ -218,7 +241,7 @@ The packaging contract also defines `memory-core`, `search`, `mcp`, `derive`,
 and the `memory` umbrella extra. `memory-core` enables durable memory only when
 the server flag is also present. `search` installs the selected FastEmbed
 multilingual MiniLM + BM25 Qdrant provider; use explicit local/server search flags.
-`derive` is intentionally dependency-free until a deriver provider declares its
+`mcp` installs the stateless stdio sidecar; `derive` is intentionally dependency-free until a deriver provider declares its
 own PDF/OCR/transcription stack. See [docs/PACKAGING.md](docs/PACKAGING.md).
 
 ## License

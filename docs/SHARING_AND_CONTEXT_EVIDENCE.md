@@ -118,8 +118,9 @@ Result: **89 passed, 1 expected selected-extra skip**, matching Windows.
 
 - The reference adapter and automatic context injection are covered by the
   separate adapter-and-Skill evidence record.
-- MCP and A2A 1.0 protocol surfaces remain unimplemented; legacy JSON-RPC is
-  still identified separately.
+- This focused record predates MCP delivery. MCP now has separate
+  cross-transport evidence; legacy JSON-RPC and the still-unimplemented A2A 1.0
+  binding remain identified separately.
 - This record exercises SQLite FTS5 plus deterministic LIKE fallback; hybrid
   Qdrant retrieval is covered by the separate retrieval evidence record.
 - No long-running soak, production deployment, or cutover is claimed.

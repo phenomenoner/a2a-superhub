@@ -5,14 +5,16 @@
     "Diagnose why the local a2a-superhub memory index is degraded.",
     "Use Superhub to create a task for agent.alpha.",
     "Find the previous gateway observation in A2A Superhub shared memory.",
-    "Validate the operate-a2a-superhub skill installation."
+    "Validate the operate-a2a-superhub skill installation.",
+    "Connect this A2A Superhub to my MCP client and watch agent.beta's wakeup resource."
   ],
   "negative": [
     "What is the A2A protocol?",
     "Design a generic agent memory system.",
     "Compare Qdrant and pgvector.",
     "Summarize this GitHub repository.",
-    "Operate a different product also called Super Hub."
+    "Operate a different product also called Super Hub.",
+    "Explain MCP resource subscriptions in general."
   ],
   "ambiguous": [
     "Is a Superhub running on this machine?",

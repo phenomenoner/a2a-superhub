@@ -125,8 +125,8 @@ class HubClient:
         result["compatibility"] = "current"
         return result
 
-    def search(self, query: str, *, limit: int = 50) -> dict[str, Any]:
-        return self.request("GET", "/v1/memory/search", query={"q": query, "limit": limit})
+    def search(self, query: str, *, limit: int = 50, mode: str = "auto") -> dict[str, Any]:
+        return self.request("GET", "/v1/memory/search", query={"q": query, "limit": limit, "mode": mode})
 
     def read_note(self, note_id: str) -> dict[str, Any]:
         return self.request("GET", f"/v1/memory/notes/{note_id}")
@@ -142,3 +142,33 @@ class HubClient:
 
     def create_note(self, request: dict[str, Any], idempotency_key: str) -> dict[str, Any]:
         return self.request("POST", "/v1/memory/notes", body=request, idempotency_key=idempotency_key)
+
+    def timeline(
+        self,
+        *,
+        project: str | None = None,
+        pair: str | None = None,
+        about: str | None = None,
+        include_superseded: bool = False,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        return self.request(
+            "GET",
+            "/v1/memory/timeline",
+            query={
+                "project": project,
+                "pair": pair,
+                "about": about,
+                "includeSuperseded": str(include_superseded).lower(),
+                "limit": limit,
+            },
+        )
+
+    def graph(self, node: str, *, hops: int = 1) -> dict[str, Any]:
+        return self.request("GET", "/v1/memory/graph", query={"node": node, "hops": hops})
+
+    def create_task(self, request: dict[str, Any]) -> dict[str, Any]:
+        return self.request("POST", "/v1/tasks", body=request)
+
+    def task_status(self, task_id: str) -> dict[str, Any]:
+        return self.request("GET", f"/v1/tasks/{task_id}")

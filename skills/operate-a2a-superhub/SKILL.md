@@ -17,16 +17,22 @@ If discovery is ambiguous, perform read-only discovery only. Stop clearly on an
 unsupported version, missing capability, or missing authority; do not probe by
 mutation.
 
-Run `scripts/doctor.py --json` for a read-only preflight. It distinguishes
+Run `scripts/doctor.py --json` for a read-only preflight and negotiated
+transport choice. It tries the packaged MCP stdio sidecar, uses subscriptions
+when advertised, falls back to polling when they are absent, and distinguishes
 connection, authentication, and compatibility failures without printing the
-token. Run `scripts/smoke.py --json` against disposable state by default. An
+token. Use `--transport http` to require HTTP or `--transport mcp` to fail
+closed unless MCP initializes. Run `scripts/smoke.py --json` against disposable state by default. An
 existing target requires both `--url` and `--allow-write` plus sender/receiver
 token environment handles.
 
 ## Choose a transport
 
 - Prefer CLI for local initialization, configuration, and future operator workflows.
-- Prefer MCP for agent operations only when both client and server negotiated the pinned protocol and required capabilities.
+- Prefer MCP for agent operations only after initialize negotiation confirms
+  protocol `2025-11-25`, the required tools, and any resource capability in use.
+- If resource subscriptions are not advertised, poll `resources/read`; this is
+  a refresh fallback, not permission to bypass hub authorization.
 - Use HTTP as the semantic fallback for deterministic automation.
 - Never assume MCP resources, subscriptions, memory, or A2A 1.0 merely from the product name.
 
@@ -61,7 +67,8 @@ principal matches the intended agent. Deliver only the delimited `role=data`
 block, then acknowledge. Session-end handoff requires explicit write authority
 and real task/event/artifact provenance links.
 
-MCP, A2A 1.0, destructive repair, release, and deployment remain unavailable.
+The packaged MCP sidecar exposes ten stable memory/task tools and two authorized
+resource templates. A2A 1.0, destructive repair, release, and deployment remain unavailable.
 Hybrid retrieval is available only when `memorySearch: hybrid` and retrieval
 capabilities are advertised; otherwise request `mode=keyword` or accept the
 reported automatic keyword fallback. On a legacy Agent Card without current granular

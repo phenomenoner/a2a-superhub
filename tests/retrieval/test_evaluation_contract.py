@@ -11,6 +11,17 @@ FIXTURES = Path(__file__).with_name("fixtures")
 
 
 class RetrievalEvaluationContractTests(unittest.TestCase):
+    def test_retrieval_schema_uses_the_public_canonical_id(self) -> None:
+        schema = json.loads(
+            (Path(__file__).resolve().parents[2] / "schemas" / "retrieval-v1.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            "https://phenomenoner.github.io/a2a-superhub/schemas/retrieval-v1.json",
+            schema["$id"],
+        )
+
     def test_sanitized_corpus_and_pre_result_thresholds_are_frozen(self) -> None:
         corpus = json.loads((FIXTURES / "retrieval-eval-corpus.json").read_text(encoding="utf-8"))
         thresholds = json.loads((FIXTURES / "retrieval-eval-thresholds.json").read_text(encoding="utf-8"))

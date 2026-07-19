@@ -52,6 +52,14 @@ class SkillContractTests(unittest.TestCase):
         self.assertGreaterEqual(len(corpus["ambiguous"]), 1)
         self.assertEqual("read-only-discovery", corpus["ambiguousPolicy"])
         self.assertTrue(all("superhub" in prompt.casefold() or "a2a-superhub" in prompt.casefold() for prompt in corpus["positive"]))
+        def explicit_product_trigger(prompt: str) -> bool:
+            normalized = prompt.casefold()
+            return "a2a superhub" in normalized or "a2a-superhub" in normalized or "superhub" in normalized
+
+        positive_rate = sum(explicit_product_trigger(prompt) for prompt in corpus["positive"]) / len(corpus["positive"])
+        negative_rejection_rate = sum(not explicit_product_trigger(prompt) for prompt in corpus["negative"]) / len(corpus["negative"])
+        self.assertGreaterEqual(positive_rate, 0.95)
+        self.assertGreaterEqual(negative_rejection_rate, 0.95)
 
     def test_fingerprint_matches_all_agent_facing_contracts(self) -> None:
         actual = contract_fingerprint(ROOT, self.compatibility["contractFiles"])
@@ -64,6 +72,23 @@ class SkillContractTests(unittest.TestCase):
         changed["$defs"]["createNoteRequest"]["properties"]["newUnannouncedField"] = {"type": "string"}
         drifted = contract_fingerprint(ROOT, self.compatibility["contractFiles"], {api_path: changed})
         self.assertNotEqual(self.compatibility["agentSurfaceRevision"], drifted)
+
+    def test_deliberate_mcp_and_cli_drift_fail_without_skill_update(self) -> None:
+        mcp_path = "schemas/mcp-memory-v1.contract.json"
+        changed_mcp = copy.deepcopy(json.loads((ROOT / mcp_path).read_text(encoding="utf-8")))
+        changed_mcp["tools"][0]["name"] = "unannounced_tool_name"
+        self.assertNotEqual(
+            self.compatibility["agentSurfaceRevision"],
+            contract_fingerprint(ROOT, self.compatibility["contractFiles"], {mcp_path: changed_mcp}),
+        )
+
+        surface_path = "schemas/agent-surface-v1.json"
+        changed_surface = copy.deepcopy(json.loads((ROOT / surface_path).read_text(encoding="utf-8")))
+        changed_surface["cli"]["implemented"].append("unannounced-command")
+        self.assertNotEqual(
+            self.compatibility["agentSurfaceRevision"],
+            contract_fingerprint(ROOT, self.compatibility["contractFiles"], {surface_path: changed_surface}),
+        )
 
 
 if __name__ == "__main__":

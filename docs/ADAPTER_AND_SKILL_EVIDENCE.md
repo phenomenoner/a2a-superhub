@@ -26,7 +26,9 @@ and real Markdown/SQLite corpus benchmarks.
 
 The adapter surface is deliberately narrow: it is explicitly removable,
 negotiates capabilities, injects only delimited untrusted data, and uses the
-opt-in product Skill. MCP and an A2A 1.0 runtime binding remain future work.
+opt-in product Skill. MCP is now delivered and verified separately in
+[MCP_AND_MULTI_RUNTIME_EVIDENCE.md](MCP_AND_MULTI_RUNTIME_EVIDENCE.md); an A2A
+1.0 runtime binding remains future work.
 Hybrid retrieval is implemented and evidenced separately; long-running soak and
 production SLA claims remain open.
 
@@ -109,7 +111,7 @@ tokens, or user state.
 The Skill Creator structural validator returned `Skill is valid!`. Regenerated
 `agents/openai.yaml` bytes match the packaged copy. The product validator also
 recomputes the agent-contract fingerprint rather than trusting a static string:
-`sha256:bfcfa9c36a436fd9c9b4f8b7ddda44b87e489544818c45711bb9ead92d7b39d4`.
+`sha256:34b77e17420996c03535944eb6a5ebcdab4245d47432797d3b98815da286c3f7`.
 
 ## Fresh final verification
 

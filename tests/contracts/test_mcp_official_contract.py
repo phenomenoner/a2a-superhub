@@ -39,12 +39,23 @@ class OfficialMcpContractTests(unittest.TestCase):
         resources = [ResourceTemplate.model_validate(item) for item in self.contract["resourceTemplates"]]
         self.assertEqual(len(tools), len({tool.name for tool in tools}))
         self.assertEqual(2, len(resources))
+        read_only = {
+            "memory_search",
+            "memory_read",
+            "memory_timeline",
+            "memory_graph",
+            "memory_wakeup",
+            "memory_inbox",
+            "task_status",
+        }
         for tool in tools:
             self.assertIsNotNone(tool.annotations)
-            if tool.name in {"memory_note_read", "memory_search", "memory_inbox", "memory_wakeup"}:
+            if tool.name in read_only:
                 self.assertTrue(tool.annotations.readOnlyHint, tool.name)
             else:
                 self.assertFalse(tool.annotations.readOnlyHint, tool.name)
+        task_create = next(tool for tool in tools if tool.name == "task_create")
+        self.assertTrue(task_create.annotations.openWorldHint)
 
 
 if __name__ == "__main__":
