@@ -3,9 +3,12 @@ from __future__ import annotations
 import shutil
 import sqlite3
 import tempfile
+import threading
+import time
 import unittest
 from types import SimpleNamespace
 from pathlib import Path
+from unittest.mock import patch
 
 from a2a_superhub.auth import Principal
 from a2a_superhub.memory import MemoryService, MemoryWatcher, QuarantineError, note_path, parse_note, path_collision_key, serialize_note, validate_existing_path
@@ -17,6 +20,118 @@ ADMIN = Principal("local.operator", "operator", "tok_admin", frozenset({"memory.
 
 
 class MemoryWatcherScenarios(unittest.TestCase):
+    def test_convergence_does_not_hold_writer_lock_while_planning_unchanged_jobs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            service = MemoryService(Path(tmp), enable_delivery=True)
+            for index in range(24):
+                service.create_note(
+                    {
+                        "type": "observation",
+                        "title": f"existing {index}",
+                        "visibility": "shared",
+                        "body": "already indexed",
+                    },
+                    OWNER,
+                    idempotency_key=f"existing-{index}",
+                )
+            filesystem_id = "mem_00000000000000000000000000000001"
+            filesystem_note = {
+                "schema": "a2a-superhub.memory.note.v1",
+                "id": filesystem_id,
+                "type": "observation",
+                "title": "filesystem addition",
+                "author": "local.operator",
+                "visibility": "shared",
+                "recordedAt": "2026-07-21T00:00:00Z",
+                "source": {"kind": "filesystem"},
+                "body": "new authoritative note",
+            }
+            path = note_path(service.root, filesystem_id)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(serialize_note(filesystem_note))
+
+            original_job_operation = service._job_operation
+            planned = 0
+            planning_started = threading.Event()
+
+            def slow_job_operation(note, note_file):
+                nonlocal planned
+                operation = original_job_operation(note, note_file)
+                planned += 1
+                if planned == 2:
+                    planning_started.set()
+                time.sleep(0.01)
+                return operation
+
+            failure: list[BaseException] = []
+
+            def converge() -> None:
+                try:
+                    service.sync_filesystem()
+                except BaseException as exc:  # pragma: no cover - asserted below
+                    failure.append(exc)
+
+            with patch.object(service, "_job_operation", side_effect=slow_job_operation):
+                worker = threading.Thread(target=converge)
+                worker.start()
+                self.assertTrue(planning_started.wait(5), "convergence did not reach job planning")
+                competing = sqlite3.connect(service.ops_path, timeout=0.05)
+                try:
+                    competing.execute("PRAGMA busy_timeout=50")
+                    competing.execute(
+                        "INSERT INTO ops_metadata(key,value) VALUES('concurrent-probe','ok') "
+                        "ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+                    )
+                    competing.commit()
+                finally:
+                    competing.close()
+                worker.join(timeout=10)
+
+            self.assertFalse(worker.is_alive())
+            self.assertEqual([], failure)
+
+    def test_convergence_generates_deliveries_only_for_changed_notes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            service = MemoryService(Path(tmp), enable_delivery=True)
+            for index in range(12):
+                service.create_note(
+                    {
+                        "type": "handoff",
+                        "title": f"existing handoff {index}",
+                        "visibility": "direct:agent.beta",
+                        "body": "already delivered",
+                    },
+                    OWNER,
+                    idempotency_key=f"existing-handoff-{index}",
+                )
+            filesystem_id = "mem_00000000000000000000000000000002"
+            filesystem_note = {
+                "schema": "a2a-superhub.memory.note.v1",
+                "id": filesystem_id,
+                "type": "handoff",
+                "title": "new filesystem handoff",
+                "author": "local.operator",
+                "visibility": "direct:agent.beta",
+                "recordedAt": "2026-07-21T00:00:00Z",
+                "source": {"kind": "filesystem"},
+                "body": "deliver only this change",
+            }
+            path = note_path(service.root, filesystem_id)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(serialize_note(filesystem_note))
+
+            generated: list[str] = []
+            original_generate = service._generate_deliveries_for_note
+
+            def counted_generate(note, **kwargs):
+                generated.append(note["id"])
+                return original_generate(note, **kwargs)
+
+            with patch.object(service, "_generate_deliveries_for_note", side_effect=counted_generate):
+                service.sync_filesystem()
+
+            self.assertEqual([filesystem_id], generated)
+
     def test_duplicate_quarantines_both_then_removal_recovers_canonical(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             service = MemoryService(Path(tmp), now=lambda: "2026-07-19T12:00:00Z", new_note_id=lambda: "mem_dddddddddddddddddddddddddddddddd")

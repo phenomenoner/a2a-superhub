@@ -28,6 +28,15 @@ diagnostics, and each diagnostic sample inventories state files in one pass.
 This keeps monitoring responsive without treating cached derived data as
 authoritative or skipping path and symlink validation on later scans.
 
+Filesystem convergence also computes index-recovery work before opening a write
+transaction and creates delivery records only for notes whose authoritative
+revision changed. Unchanged corpus entries are not rewritten on every watcher
+cycle. SQLite connections use a bounded busy wait for residual cross-process
+contention, so a concurrent API note or inbox cursor operation waits for a short
+transaction instead of being crowded out by a corpus-wide maintenance write.
+Contention that exceeds the bound remains an explicit failed operation; the hub
+does not silently discard the write.
+
 ## What is authoritative
 
 | State | Backup treatment | Restore treatment |

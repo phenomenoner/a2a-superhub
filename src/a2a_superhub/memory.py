@@ -303,6 +303,7 @@ class MemoryService:
         self._initialized = False
         self._authoritative_catalog: dict[str, Path] = {}
         self._scan_lock = threading.RLock()
+        self._convergence_lock = threading.RLock()
         self._note_scan_cache: dict[
             str, tuple[tuple[int, int], dict[str, Any] | None, str | None, str | None]
         ] = {}
@@ -372,8 +373,9 @@ class MemoryService:
     @contextmanager
     def _connect(self, path: Path) -> Iterator[sqlite3.Connection]:
         path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(path)
+        conn = sqlite3.connect(path, timeout=30.0)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=30000")
         try:
             yield conn
             conn.commit()
@@ -1282,36 +1284,51 @@ class MemoryService:
         self,
         valid: dict[str, tuple[dict[str, Any], Path]],
         collided_ids: set[str],
+        *,
+        indexed_manifest: dict[str, tuple[str, str]] | None = None,
     ) -> int:
-        count = 0
         if collided_ids:
             self._remove_index_ids(collided_ids)
-        with self._connect(self.index_path) as conn:
-            indexed_manifest = {
-                row["note_id"]: (row["relative_path"], row["content_hash"])
-                for row in conn.execute("SELECT note_id, relative_path, content_hash FROM manifest")
-            }
+        manifest = indexed_manifest if indexed_manifest is not None else self._indexed_manifest()
         with self._connect(self.ops_path) as conn:
-            for note, path in valid.values():
-                operation_id = self._job_operation(note, path)
-                relative = str(path.resolve().relative_to(self.root.resolve())).replace("\\", "/")
-                indexed = indexed_manifest.get(note["id"]) == (relative, self._revision(note))
-                if indexed:
-                    result = conn.execute(
-                        "INSERT OR IGNORE INTO jobs(operation_id, note_id, state, created_at, updated_at) VALUES (?, ?, 'done', ?, ?)",
-                        (operation_id, note["id"], self.now(), self.now()),
-                    )
-                else:
-                    result = conn.execute(
-                        """
-                        INSERT INTO jobs(operation_id, note_id, state, created_at, updated_at)
-                        VALUES (?, ?, 'pending', ?, ?)
-                        ON CONFLICT(operation_id) DO UPDATE SET state='pending', updated_at=excluded.updated_at
-                        """,
-                        (operation_id, note["id"], self.now(), self.now()),
-                    )
-                count += result.rowcount
-        return count
+            existing_jobs = {
+                str(row["operation_id"]): str(row["state"])
+                for row in conn.execute("SELECT operation_id,state FROM jobs")
+            }
+
+        planned: list[tuple[str, str, str]] = []
+        root = self.root.resolve()
+        for note, path in valid.values():
+            operation_id = self._job_operation(note, path)
+            relative = str(path.resolve().relative_to(root)).replace("\\", "/")
+            indexed = manifest.get(note["id"]) == (relative, self._revision(note))
+            current_state = existing_jobs.get(operation_id)
+            if indexed:
+                if current_state is None:
+                    planned.append((operation_id, note["id"], "done"))
+            elif current_state not in {"pending", "running"}:
+                planned.append((operation_id, note["id"], "pending"))
+
+        if not planned:
+            return 0
+        with self._connect(self.ops_path) as conn:
+            for operation_id, note_id, state in planned:
+                conn.execute(
+                    """
+                    INSERT INTO jobs(operation_id, note_id, state, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(operation_id) DO UPDATE SET state=excluded.state, updated_at=excluded.updated_at
+                    """,
+                    (operation_id, note_id, state, self.now(), self.now()),
+                )
+        return len(planned)
+
+    def _indexed_manifest(self) -> dict[str, tuple[str, str]]:
+        with self._connect(self.index_path) as conn:
+            return {
+                str(row["note_id"]): (str(row["relative_path"]), str(row["content_hash"]))
+                for row in conn.execute("SELECT note_id,relative_path,content_hash FROM manifest")
+            }
 
     def _scan_notes(self) -> tuple[dict[str, tuple[dict[str, Any], Path]], set[str]]:
         with self._scan_lock:
@@ -1806,9 +1823,17 @@ class MemoryService:
 
     def sync_filesystem(self, *, failpoint: str | Callable[[str], None] | None = None) -> dict[str, int]:
         """Deterministic watcher cycle: quarantine, enqueue, index, and prune deletes."""
+        with self._convergence_lock:
+            return self._sync_filesystem_locked(failpoint=failpoint)
+
+    def _sync_filesystem_locked(self, *, failpoint: str | Callable[[str], None] | None = None) -> dict[str, int]:
         self.init()
         assigned = self._assign_missing_ids(failpoint=failpoint)
-        enqueued = self.recover_jobs()
+        valid, collided_ids = self._scan_notes()
+        indexed_before = self._indexed_manifest()
+        enqueued = self._recover_jobs_from_scan(
+            valid, collided_ids, indexed_manifest=indexed_before,
+        )
         indexed = self.process_jobs()
         valid, collided_ids = self._scan_notes()
         current = {note["id"] for note, _ in valid.values()}
@@ -1826,7 +1851,17 @@ class MemoryService:
                 except sqlite3.OperationalError:
                     pass
         if self.enable_delivery:
-            self._generate_all_deliveries(valid)
+            root = self.root.resolve()
+            changed_notes = [
+                note
+                for note, path in valid.values()
+                if indexed_before.get(note["id"]) != (
+                    str(path.resolve().relative_to(root)).replace("\\", "/"),
+                    self._revision(note),
+                )
+            ]
+            for note in changed_notes:
+                self._generate_deliveries_for_note(note)
         return {"assigned": assigned, "enqueued": enqueued, "indexed": indexed, "removed": len(removed)}
 
     def quarantine(self) -> list[dict[str, str]]:
