@@ -1,6 +1,6 @@
 ---
 name: operate-a2a-superhub
-description: Operate and diagnose the A2A Superhub product across its CLI, HTTP, and declared MCP/A2A surfaces. Use when the user explicitly asks to inspect a Superhub, create or read Superhub tasks or artifacts, work with Superhub memory/inbox/wakeup/handoffs, validate this product skill, or diagnose Superhub auth, compatibility, index, queue, or capability state. Do not trigger for generic A2A protocol education, generic agent-memory design, vector database comparisons, repository summaries, or unrelated products with a similar name.
+description: Operate and diagnose the A2A Superhub product across its CLI, HTTP, and declared MCP/A2A surfaces. Use when the user explicitly asks to inspect a Superhub, create or read Superhub tasks or artifacts, work with Superhub memory/inbox/wakeup/handoffs, validate this product skill, diagnose auth/index/queue/capability state, or perform an approved local backup, clean restore, recoverable retention, or Qdrant migration drill. Do not trigger for generic A2A protocol education, generic agent-memory design, vector database comparisons, repository summaries, or unrelated products with a similar name.
 ---
 
 # Operate A2A Superhub
@@ -39,7 +39,7 @@ token environment handles.
 Read [references/capabilities-and-versions.md](references/capabilities-and-versions.md)
 when negotiating versions or fallback. Read
 [references/workflows.md](references/workflows.md) before task, artifact, memory,
-inbox, wakeup, or handoff operations.
+inbox, wakeup, handoff, backup, restore, retention, or search-migration operations.
 
 ## Preserve safety boundaries
 
@@ -70,7 +70,9 @@ and real task/event/artifact provenance links.
 The packaged MCP sidecar exposes ten stable memory/task tools and two authorized
 resource templates. HTTP supports official A2A `Part` oneof validation plus raw,
 URL, data, and text mapping, but the complete A2A 1.0 JSON-RPC binding remains
-separately unavailable. Destructive repair, release, and deployment remain unavailable.
+separately unavailable. Payload-free diagnostics are HTTP/CLI; authoritative backup,
+clean restore, recoverable retention, and search-provider migration are local CLI
+operations. Hard delete, arbitrary repair, release publication, and deployment remain unavailable.
 Artifact derivation is HTTP/CLI only and must be explicitly enabled with memory.
 Hybrid retrieval is available only when `memorySearch: hybrid` and retrieval
 capabilities are advertised; otherwise request `mode=keyword` or accept the

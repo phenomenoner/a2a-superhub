@@ -16,6 +16,7 @@ class ContractAndSecurityBundleTests(unittest.TestCase):
             "schemas/mcp-memory-v1.contract.json",
             "schemas/agent-surface-v1.json",
             "schemas/package-extras-v1.json",
+            "schemas/operations-v1.schema.json",
             "schemas/evidence-record-v1.schema.json",
             "docs/CONTRACT_AND_SECURITY_DECISIONS.md",
             "docs/CONTRACT_AND_SECURITY_EVIDENCE.md",

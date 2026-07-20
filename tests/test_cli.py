@@ -60,6 +60,53 @@ class CliTests(unittest.TestCase):
             self.assertNotEqual(0, rejected.returncode)
             self.assertNotIn("tok_", rejected.stderr)
 
+    def test_operations_cli_backup_restore_and_payload_free_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / "state"
+            subprocess.run(
+                [sys.executable, "-m", "a2a_superhub", "--state", str(state), "init"],
+                check=True, text=True, capture_output=True,
+            )
+            subprocess.run(
+                [
+                    sys.executable, "-m", "a2a_superhub", "--state", str(state),
+                    "task", "create", "--from-agent", "agent.alpha", "--to-agent", "agent.beta",
+                    "--summary", "do not expose this payload", "--idempotency-key", "ops-cli",
+                ],
+                check=True, text=True, capture_output=True,
+            )
+            archive = root / "backup.zip"
+            created = subprocess.run(
+                [
+                    sys.executable, "-m", "a2a_superhub", "--state", str(state),
+                    "operations", "backup", "create", "--destination", str(archive),
+                ],
+                check=True, text=True, capture_output=True,
+            )
+            self.assertEqual("a2a-superhub.backup.v1", json.loads(created.stdout)["schema"])
+            restored = root / "restored"
+            result = subprocess.run(
+                [
+                    sys.executable, "-m", "a2a_superhub", "--state", str(state),
+                    "operations", "backup", "restore", "--archive", str(archive),
+                    "--target-state", str(restored),
+                ],
+                check=True, text=True, capture_output=True,
+            )
+            self.assertEqual("verified", json.loads(result.stdout)["integrity"])
+            diagnostic = subprocess.run(
+                [
+                    sys.executable, "-m", "a2a_superhub", "--state", str(restored),
+                    "operations", "diagnostics",
+                ],
+                check=True, text=True, capture_output=True,
+            )
+            payload = json.loads(diagnostic.stdout)
+            self.assertEqual(1, payload["stores"]["tasks"]["records"])
+            self.assertNotIn("do not expose this payload", diagnostic.stdout)
+            self.assertNotIn(str(root), diagnostic.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

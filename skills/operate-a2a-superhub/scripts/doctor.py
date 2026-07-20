@@ -76,7 +76,9 @@ def inspect_hub(url: str, token: str | None, *, requested_transport: str = "auto
         result["transport"]["fallbackReason"] = mcp_error
     principal = capabilities.get("principal") if isinstance(capabilities, dict) else None
     scopes = principal.get("scopes", []) if isinstance(principal, dict) else []
-    if "memory.admin" in scopes or "hub.admin" in scopes:
+    if capabilities.get("operationalDiagnostics") and "hub.admin" in scopes:
+        result["operations"] = client.request("GET", "/v1/operations/diagnostics")
+    elif "memory.admin" in scopes:
         result["memoryStats"] = client.request("GET", "/v1/memory/stats")
     return result
 

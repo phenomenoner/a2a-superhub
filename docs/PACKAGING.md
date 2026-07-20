@@ -31,3 +31,9 @@ The machine authority is `schemas/package-extras-v1.json`. Contract tests compar
 it with `pyproject.toml`, assert the umbrella union, assert zero unconditional
 runtime requirements, and import each selected extra in a fresh environment.
 CI creates a separate installation job for every extra and the umbrella.
+
+The 0.2 release gate additionally builds a wheel and source archive in isolation,
+installs the supported previous package, upgrades without replacing authoritative
+state, performs a clean backup/restore, rolls the package and bundled Skill back,
+and upgrades forward again. This verifies artifact behavior; it does not publish
+to an index or claim a deployment.

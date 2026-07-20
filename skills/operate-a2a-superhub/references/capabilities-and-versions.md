@@ -5,7 +5,7 @@ planning or marketing label.
 
 The current opt-in memory, hybrid-retrieval, artifact-text, and agent-protocol contract pins:
 
-- product baseline: 0.1.0;
+- product baseline: 0.2.0;
 - memory API: `memory.v1`, with opt-in offline sharing implemented;
 - note schema: `a2a-superhub.memory.note.v1`, implemented for Markdown notes;
 - A2A `Part` mapping: `text`, `raw`, `url`, and `data` oneofs are implemented;
@@ -15,6 +15,9 @@ The current opt-in memory, hybrid-retrieval, artifact-text, and agent-protocol c
   chunk transports; the advertised `maxArtifactBytes` is a guardrail, not a capacity claim;
 - derivation: default off, with bounded local PDF text extraction and an optional
   Tesseract executable for image OCR; all output is `untrusted-data`;
+- operations API: `operations.v1`, with payload-free admin diagnostics plus local
+  authoritative backup/clean restore, recoverable retention, and parity-gated
+  Qdrant provider activation/rollback;
 - MCP negotiation: protocol `2025-11-25`, implemented by the stateless stdio
   sidecar with ten tools and `memory://note/{id}` plus
   `memory://wakeup/{agent}` resources;
@@ -34,6 +37,11 @@ Treat `artifactDerivation`, `artifactUploads`, `maxArtifactBytes`, and
 notes require the corresponding share authority. Image media support does not
 mean the Tesseract executable is installed, so provider availability must be
 reported rather than inferred.
+
+Treat `operationalDiagnostics`, `offlineAuthoritativeBackup`, and
+`recoverableRetention` independently. HTTP advertises and serves diagnostics only;
+state mutations remain local CLI operations and require the hub runtime lease to be free.
+An activated Qdrant provider is consumed only with `--search-mode configured`.
 
 MCP resource subscription is independently negotiated. Use resource-updated
 notifications when `resources.subscribe` is true. Otherwise poll the same

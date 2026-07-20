@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from a2a_superhub.artifacts import ArtifactStore
 from a2a_superhub.auth import Principal
 from a2a_superhub.memory import MemoryService
 from a2a_superhub.retrieval import QdrantRetrievalProvider, enforce_thresholds, evaluate_rankings
@@ -42,16 +43,17 @@ class HybridRetrievalScenarioTests(unittest.TestCase):
             self.assertEqual(ops_before, hashlib.sha256(service.ops_path.read_bytes()).hexdigest())
 
             notes = {note["id"]: note for note in corpus["notes"]}
+            authorization = MemoryService(temporary, artifact_store=ArtifactStore(temporary))
             rankings = {}
             unauthorized = 0
             for query in corpus["queries"]:
                 principal = Principal(query["principal"], "agent", "test", frozenset({"memory.read"}))
                 results = provider.search(
                     query["text"], principal, load_note=notes.__getitem__,
-                    can_read=MemoryService._can_read, limit=10,
+                    can_read=authorization._can_read, limit=10,
                 )
                 rankings[query["id"]] = [note["id"] for note in results]
-                unauthorized += sum(not MemoryService._can_read(principal, note) for note in results)
+                unauthorized += sum(not authorization._can_read(principal, note) for note in results)
                 self.assertFalse(set(query.get("expectedHidden", [])) & set(rankings[query["id"]]))
             metrics = evaluate_rankings(rankings, {q["id"]: q["relevance"] for q in corpus["queries"]})
             enforce_thresholds({
@@ -65,7 +67,7 @@ class HybridRetrievalScenarioTests(unittest.TestCase):
             stale = provider.search(
                 "gateway restart", Principal("agent.alpha", "agent", "test", frozenset({"memory.read"})),
                 load_note={note["id"]: note for note in changed}.__getitem__,
-                can_read=MemoryService._can_read, limit=20,
+                can_read=authorization._can_read, limit=20,
             )
             self.assertNotIn(changed[0]["id"], {note["id"] for note in stale})
             swapped = provider.rebuild(changed)

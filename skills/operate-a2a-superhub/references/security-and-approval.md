@@ -16,6 +16,16 @@
 - If the server cannot enforce the requested scope or role boundary, stop rather than relying on Skill text.
 - The reference adapter is removable client-side code; the server core must not import or depend on it.
 - Session-end handoff needs explicit authorization, an idempotency key, and real provenance targets.
-- Unsupported or destructive requests stop for authority. The product exposes a
-  narrowly scoped derived-note purge; it exposes no general repair, source-artifact
-  delete, restore, or federation workflow.
+- Backup, restore, recoverable retention, and search migration are local CLI
+  operations protected by the state runtime lease. Confirm that the hub is stopped,
+  use an exact state/destination/object/server target, and require explicit approval.
+- Public-classified backup fails closed on private or secret files. The explicit
+  override records a warning but never authorizes publication or removes secrets.
+- Restore requires a nonexistent target, exact archive membership, path containment,
+  file hashes, rebuilt derived indexes, and artifact checksum verification.
+- Retention refuses unread deliveries and still-referenced artifacts. Private/direct
+  objects require a separate explicit flag; hard delete remains unavailable.
+- Search migration may activate only after authorized query parity. Markdown notes
+  remain authoritative and rollback must retain both rebuildable provider states.
+- Unsupported or destructive requests stop for authority. The product exposes no
+  general repair, source-artifact hard delete, federation, release, or deployment workflow.

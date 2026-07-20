@@ -80,6 +80,63 @@ authorization.
 5. Reindex and collection swap are operator mutations. Confirm exact state and
    server URL; never treat Qdrant as authoritative or delete memory ops/ack data.
 
+## Operational diagnostics
+
+1. Require `hub.admin` and the advertised `operationalDiagnostics` capability.
+2. Prefer `GET /v1/operations/diagnostics` or
+   `a2a-superhub --state <state> operations diagnostics`.
+3. Report counts, queue depth, source/index revision, quarantine, retrieval model
+   identity, state bytes, and product version. Do not request or emit task payloads,
+   note bodies, token material, or local paths.
+4. Diagnosis is read-only. A degraded count is evidence for a separate approved
+   action, not implicit repair authority.
+
+## Authoritative backup and clean restore
+
+1. Resolve the exact local state, destination, target classification, and optional
+   principal registry. Stop the hub and confirm the runtime lease is released.
+2. Default to a private destination:
+   `a2a-superhub --state <state> operations backup create --destination <archive>`.
+   Include `--auth-config` only when credential recovery is explicitly required.
+3. A public-classified destination fails closed when private or secret state is
+   present. `--allow-sensitive-public` is an exceptional, explicit override whose
+   warning is recorded in the manifest; it does not make the archive safe to publish.
+4. Verify archive custody and SHA-256 outside the hub. Derived keyword/Qdrant indexes
+   are excluded because they are rebuildable; tasks, artifacts, Markdown notes,
+   delivery/receipt state, retention tombstones, and the requested principal registry
+   are authoritative.
+5. Restore only to a nonexistent clean target:
+   `a2a-superhub operations backup restore --archive <archive> --target-state <new-state>`.
+   The command verifies the exact member set and hashes, rejects unsafe paths, rebuilds
+   derived memory indexes, and verifies artifact checksums before making the target visible.
+6. Start the restored target separately, run diagnostics and representative reads,
+   then perform an explicit cutover. Never overwrite the source state in place.
+
+## Recoverable retention
+
+1. Stop the hub, resolve the exact note or artifact, and obtain approval for its
+   impact and restore path.
+2. `operations retention trash-note` refuses unacknowledged deliveries. Private or
+   direct notes require `--allow-private`; that flag records authority, not a content downgrade.
+3. `operations retention trash-artifact` refuses authoritative memory references and
+   retains the content-addressed blob. Private/direct manifests require `--allow-private`.
+4. Use `operations retention list` to inspect sanitized tombstones. Restore with
+   `operations retention restore <memory-note|artifact> <id>`; the stored SHA-256 must match.
+5. This surface is recoverable trash, not a hard-delete or repository-history erasure guarantee.
+
+## Qdrant local-to-server migration
+
+1. Treat Markdown memory as authoritative and both Qdrant locations as derived.
+   Stop the hub, identify an explicit server URL, model cache, and sanitized parity-query file.
+2. Run `operations search-migration drill --server-url <url> --queries <json>`.
+   The drill rebuilds local and server collections and compares ordered, finally
+   authorized results for every query.
+3. Add `--activate` only when the requested parity threshold is satisfied. Start the
+   hub with `--search-mode configured` to consume the activated provider.
+4. On provider regression, stop the hub and run
+   `operations search-migration rollback`, then restart with configured mode.
+5. Never delete the local collection or authoritative notes as part of the drill.
+
 ## MCP agent workflow
 
 1. Configure the sidecar with `A2A_SUPERHUB_URL` and a token handle in

@@ -377,7 +377,7 @@ concurrent connections.
 | **MCP agent integration** | ✅ Implemented (opt-in) | Ten stable tools, authorized `memory://` resources, negotiated subscription/poll refresh, and HTTP↔MCP offline restart scenarios through the official SDK. |
 | **A2A 1.0 runtime binding** | 📐 Design RFC | A standards-compliant binding remains separate from the implemented legacy JSON-RPC facade. |
 | **Artifact text derivation** | ✅ Implemented (opt-in) | Bounded PDF text and optional Tesseract OCR become untrusted derived notes; current source ACL and checksum backlinks are enforced. Captioning and transcripts remain future providers. |
-| **Operational hardening** | 🗺 Planned | Retention, garbage collection, backup/restore runbooks, workload sizing, and long-running soak evidence. |
+| **Operational controls** | 🧪 Implemented; workload validation in progress | Authoritative backup/clean restore, recoverable retention, payload-free diagnostics, and Qdrant migration are implemented. General garbage collection remains absent; supported workload language waits for package/rollback and 24-hour soak evidence. |
 | **Hub federation** | 🗺 Planned | Namespaced hub-to-hub memory exchange with explicit same-operator trust and isolation evidence. |
 | **Coordination hardening** | Mixed | A2A Part-model validation and restart-safe chunked artifacts are implemented; SSE streaming, the complete A2A 1.0 binding, push notifications, and broader negotiation remain planned. |
 

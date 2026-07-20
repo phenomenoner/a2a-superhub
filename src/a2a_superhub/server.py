@@ -15,6 +15,7 @@ from .artifacts import ArtifactAccessError, ArtifactConflictError, ArtifactError
 from .auth import BearerAuth, FixedWindowLimiter, Principal
 from .derivation import DerivationError, DerivationService
 from .memory import AuthorizationError, ConflictError, CursorError, MemoryError as HubMemoryError, MemoryService, MemoryWatcher, RequestTooLargeError
+from .operations import OperationsDiagnostics, OperationsError, StateLease
 from .parts import normalize_a2a_parts, public_part
 from .store import HubStore
 
@@ -124,10 +125,11 @@ def make_server(
     derivations = DerivationService(state_dir, artifacts, memory) if enable_derivers and memory else None
     if derivations:
         derivations.init()
+    operations_diagnostics = OperationsDiagnostics(state_dir, memory_service=memory)
     runtime_watcher_enabled = False
 
     class Handler(BaseHTTPRequestHandler):
-        server_version = "a2a-superhub/0.1"
+        server_version = "a2a-superhub/0.2"
         _principal: Principal | None = None
 
         def log_message(self, fmt: str, *args: Any) -> None:
@@ -275,6 +277,9 @@ def make_server(
                         "maxArtifactBytes": artifacts.max_artifact_bytes,
                         "artifactDerivation": bool(derivations),
                         "derivedTextTrust": "untrusted-data",
+                        "operationalDiagnostics": True,
+                        "offlineAuthoritativeBackup": True,
+                        "recoverableRetention": True,
                         "retrieval": memory.search_status() if memory else {"provider": "keyword"},
                         "principal": {
                             "subject": self._principal.subject,
@@ -283,6 +288,11 @@ def make_server(
                             "scopes": sorted(self._principal.scopes),
                         },
                     })
+                    return
+                if path == "/v1/operations/diagnostics":
+                    if not self._principal.has("hub.admin"):
+                        raise AuthorizationError("hub.admin scope required")
+                    self._json(operations_diagnostics.collect(self._principal))
                     return
                 if memory and path in {"/v1/memory/notes", "/v1/memory/search"}:
                     if not self._principal.has("memory.read"):
@@ -776,6 +786,21 @@ def make_server(
             httpd.runtime_watcher_enabled = True  # type: ignore[attr-defined]
             httpd.memory_convergence_event = converged  # type: ignore[attr-defined]
             runtime_watcher_enabled = True
+    state_lease = StateLease(state_dir, purpose="runtime")
+    try:
+        state_lease.__enter__()
+    except OperationsError as exc:
+        httpd.server_close()
+        raise ValueError(str(exc)) from exc
+    close_before_state_lease = httpd.server_close
+
+    def close_with_state_lease() -> None:
+        try:
+            close_before_state_lease()
+        finally:
+            state_lease.__exit__(None, None, None)
+
+    httpd.server_close = close_with_state_lease  # type: ignore[method-assign]
     return httpd
 
 
@@ -806,4 +831,7 @@ def run_server(
         enable_derivers=enable_derivers, max_artifact_bytes=max_artifact_bytes,
     )
     print(f"a2a-superhub listening on http://{host}:{httpd.server_port}")
-    httpd.serve_forever()
+    try:
+        httpd.serve_forever()
+    finally:
+        httpd.server_close()

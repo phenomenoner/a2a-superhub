@@ -14,7 +14,7 @@
 
 **[Product site](https://phenomenoner.github.io/a2a-superhub/)** ·
 **[Shared memory design and implemented surfaces](docs/DESIGN.md)** ·
-[API](docs/API.md) · [Adapters](docs/ADAPTERS.md) · [Security](docs/SECURITY.md)
+[API](docs/API.md) · [Operations](docs/OPERATIONS.md) · [Adapters](docs/ADAPTERS.md) · [Security](docs/SECURITY.md)
 
 ---
 
@@ -37,7 +37,7 @@ Superhub attacks all three with one small, local-first hub.
 | Plane | Status | What it gives you |
 |---|---|---|
 | **Coordination plane** | ✅ Shipped (v1) | Durable task lifecycle, progress events, content-addressed artifacts, Agent Card registry, idempotency, bearer auth, rate limits. Dependency-free Python + SQLite. |
-| **Memory plane** | ✅ MCP-integrated foundation (opt-in) + [future design](docs/DESIGN.md) | Implemented Markdown truth, durable ops queue, FTS5 fallback, FastEmbed/Qdrant hybrid retrieval, authorized timeline/graph, multi-consumer inbox, safe wakeup, task-log, a stateless 10-tool MCP stdio sidecar, reference adapter, operator Skill, and optional PDF/image text derivation with source-artifact authorization. A complete A2A 1.0 binding and operational readiness remain future work. |
+| **Memory plane** | ✅ MCP-integrated foundation (opt-in) + [future design](docs/DESIGN.md) | Implemented Markdown truth, durable ops queue, FTS5 fallback, FastEmbed/Qdrant hybrid retrieval, authorized timeline/graph, multi-consumer inbox, safe wakeup, task-log, a stateless 10-tool MCP stdio sidecar, reference adapter, operator Skill, optional PDF/image text derivation, and offline operational controls. A complete A2A 1.0 binding remains future work; the supported operational workload waits for published package/rollback and 24-hour soak evidence. |
 
 Agents remain peers, not children of a central framework. The hub owns
 cross-agent semantics; adapters own local runtime integration.
@@ -86,6 +86,8 @@ Shipped and tested; the coordination core remains dependency-free:
 - CLI and HTTP server, Python standard library only.
 - Optional MCP 2025-11-25 stdio sidecar with ten memory/task tools, authorized
   resources, subscription notifications, and polling fallback guidance.
+- Payload-free admin diagnostics plus offline authoritative backup/clean restore,
+  recoverable retention, and parity-gated Qdrant provider activation/rollback.
 
 ### Quickstart
 
@@ -214,8 +216,10 @@ transcription, or image captioning.
   idempotent jobs, explicit retry/cancel, and derived-note-only purge.
 - **Additional media providers — 🗺 Planned:** image captioning and audio/video
   transcription remain provider work, not implied by OCR support.
-- **Operational hardening — 🗺 Planned:** retention, garbage collection,
-  backup/restore runbooks, and workload-specific soak evidence.
+- **Operational controls — 🧪 Validation in progress:** authoritative backup/clean
+  restore, recoverable retention, payload-free diagnostics, and Qdrant migration
+  are implemented. General garbage collection remains absent; the supported
+  workload claim waits for the published package/rollback and 24-hour soak evidence.
 - **Hub federation — 🗺 Planned:** namespaced, explicitly trusted hub-to-hub
   memory exchange.
 - **Coordination hardening — mixed:** A2A Part-model validation and chunked

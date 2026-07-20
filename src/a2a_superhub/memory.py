@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import base64
+import copy
 import hmac
 import json
 import os
@@ -301,6 +302,72 @@ class MemoryService:
         self.artifact_store = artifact_store
         self._initialized = False
         self._authoritative_catalog: dict[str, Path] = {}
+        self._scan_lock = threading.RLock()
+        self._note_scan_cache: dict[
+            str, tuple[tuple[int, int], dict[str, Any] | None, str | None, str | None]
+        ] = {}
+
+    @staticmethod
+    def _file_signature(path: Path) -> tuple[int, int]:
+        stat = path.stat()
+        return stat.st_mtime_ns, stat.st_size
+
+    def _cached_parse_note(self, path: Path, *, resolved: Path | None = None) -> dict[str, Any]:
+        """Parse changed notes once while retaining full validation on every change."""
+        with self._scan_lock:
+            target = resolved or path.resolve()
+            cache_key = str(target)
+            for _ in range(2):
+                before = self._file_signature(target)
+                cached = self._note_scan_cache.get(cache_key)
+                if cached and cached[0] == before:
+                    if cached[2] is not None:
+                        raise QuarantineError(cached[2])
+                    assert cached[1] is not None
+                    return copy.deepcopy(cached[1])
+                data = target.read_bytes()
+                after = self._file_signature(target)
+                if before != after:
+                    continue
+                try:
+                    note = parse_note(data)
+                except Exception as exc:
+                    reason = str(exc)
+                    self._note_scan_cache[cache_key] = (after, None, reason, None)
+                    raise QuarantineError(reason) from exc
+                self._note_scan_cache[cache_key] = (
+                    after, copy.deepcopy(note), None, self._revision(note),
+                )
+                return note
+            raise QuarantineError("note changed during scan")
+
+    def _remember_note(self, path: Path, note: dict[str, Any]) -> None:
+        with self._scan_lock:
+            try:
+                signature = self._file_signature(path)
+            except OSError:
+                return
+            self._note_scan_cache[str(path.resolve())] = (
+                signature, copy.deepcopy(note), None, self._revision(note),
+            )
+
+    def _cached_note_revision(
+        self, path: Path, note: dict[str, Any], *, verified_current: bool = False,
+    ) -> str:
+        with self._scan_lock:
+            target = path if verified_current else path.resolve()
+            cache_key = str(target)
+            cached = self._note_scan_cache.get(cache_key)
+            if verified_current and cached and cached[3] is not None:
+                return cached[3]
+            signature = self._file_signature(target)
+            if cached and cached[0] == signature and cached[3] is not None:
+                return cached[3]
+            revision = self._revision(note)
+            self._note_scan_cache[cache_key] = (
+                signature, copy.deepcopy(note), None, revision,
+            )
+            return revision
 
     @contextmanager
     def _connect(self, path: Path) -> Iterator[sqlite3.Connection]:
@@ -605,7 +672,9 @@ class MemoryService:
                 raise ConflictError("idempotency reservation is still in progress; retry safely")
         path = note_path(self.root, note["id"])
         atomic_write(path, serialize_note(note), failpoint=failpoint)
-        self._authoritative_catalog[note["id"].casefold()] = path.resolve()
+        self._remember_note(path, note)
+        with self._scan_lock:
+            self._authoritative_catalog[note["id"].casefold()] = path.resolve()
         self.record_receipt(trace_id, "write", f"write:{note['id']}", principal.subject, "committed", {"noteId": note["id"]})
         _hit_failpoint(failpoint, "after_replace_before_job")
         operation_id = self._job_operation(note, path)
@@ -656,15 +725,14 @@ class MemoryService:
                 targets.add((recipient, "handoff"))
         return {(recipient, reason) for recipient, reason in targets if recipient != note["author"]}
 
-    @staticmethod
-    def _corpus_revision(valid: dict[str, tuple[dict[str, Any], Path]]) -> str:
+    def _corpus_revision(self, valid: dict[str, tuple[dict[str, Any], Path]]) -> str:
         digest = hashlib.sha256()
         for key, (note, path) in sorted(valid.items()):
             digest.update(key.encode("utf-8"))
             digest.update(b"\0")
             digest.update(str(path).encode("utf-8"))
             digest.update(b"\0")
-            digest.update(MemoryService._revision(note).encode("ascii"))
+            digest.update(self._cached_note_revision(path, note, verified_current=True).encode("ascii"))
             digest.update(b"\0")
         return "sha256:" + digest.hexdigest()
 
@@ -1134,10 +1202,11 @@ class MemoryService:
 
     def _read_authoritative_with_path(self, note_id: str) -> tuple[dict[str, Any], Path]:
         NOTE_ID.fullmatch(note_id) or (_ for _ in ()).throw(MemoryError("invalid note id"))
-        cached = self._authoritative_catalog.get(note_id.casefold())
+        with self._scan_lock:
+            cached = self._authoritative_catalog.get(note_id.casefold())
         if cached is not None and cached.is_file():
             validate_existing_path(self.root, cached)
-            note = parse_note(cached.read_bytes())
+            note = self._cached_parse_note(cached)
             if note["id"] != note_id:
                 raise QuarantineError("authoritative note id changed")
             return note, cached
@@ -1158,7 +1227,7 @@ class MemoryService:
                 if path.resolve() in {item.resolve() for item in candidates}:
                     continue
                 try:
-                    parsed = parse_note(path.read_bytes())
+                    parsed = self._cached_parse_note(path)
                 except QuarantineError:
                     continue
                 if parsed["id"] == note_id:
@@ -1166,14 +1235,15 @@ class MemoryService:
         valid: list[tuple[dict[str, Any], Path]] = []
         for path in candidates:
             validate_existing_path(self.root, path)
-            note = parse_note(path.read_bytes())
+            note = self._cached_parse_note(path)
             if note["id"] == note_id:
                 valid.append((note, path.resolve()))
         if not valid:
             raise KeyError(f"note not found: {note_id}")
         if len(valid) != 1:
             raise QuarantineError("duplicate note id")
-        self._authoritative_catalog[note_id.casefold()] = valid[0][1]
+        with self._scan_lock:
+            self._authoritative_catalog[note_id.casefold()] = valid[0][1]
         return valid[0]
 
     def read_note(self, note_id: str, principal: Principal) -> dict[str, Any]:
@@ -1244,46 +1314,64 @@ class MemoryService:
         return count
 
     def _scan_notes(self) -> tuple[dict[str, tuple[dict[str, Any], Path]], set[str]]:
-        records: list[tuple[dict[str, Any], Path, str, str]] = []
-        active_quarantine_paths: set[str] = set()
-        notes_root = self.root / "notes"
-        for path in sorted(notes_root.glob("**/*.md")) if notes_root.exists() else []:
-            try:
-                note = parse_note(path.read_bytes())
-                records.append((note, path.resolve(), note["id"].casefold(), path_collision_key(self.root, path)))
-            except Exception as exc:
-                self._record_quarantine(path, str(exc))
-                active_quarantine_paths.add(str(path.resolve().relative_to(self.root.resolve())))
-        by_id: dict[str, list[tuple[dict[str, Any], Path, str, str]]] = {}
-        by_path: dict[str, list[tuple[dict[str, Any], Path, str, str]]] = {}
-        for record in records:
-            by_id.setdefault(record[2], []).append(record)
-            by_path.setdefault(record[3], []).append(record)
-        collision_records = {
-            (record[1], record[2])
-            for group in [*by_id.values(), *by_path.values()]
-            if len(group) > 1
-            for record in group
-        }
-        collided_ids = {record[2] for record in records if (record[1], record[2]) in collision_records}
-        valid: dict[str, tuple[dict[str, Any], Path]] = {}
-        for note, path, id_key, _ in records:
-            if (path, id_key) in collision_records:
-                self._record_quarantine(path, "duplicate note id or normalized path collision")
-                active_quarantine_paths.add(str(path.resolve().relative_to(self.root.resolve())))
-            else:
-                valid[id_key] = (note, path)
-        with self._connect(self.ops_path) as conn:
-            if active_quarantine_paths:
-                placeholders = ",".join("?" for _ in active_quarantine_paths)
-                conn.execute(
-                    f"UPDATE quarantine SET state='resolved', resolved_at=? WHERE state='active' AND path NOT IN ({placeholders})",
-                    (self.now(), *sorted(active_quarantine_paths)),
-                )
-            else:
-                conn.execute("UPDATE quarantine SET state='resolved', resolved_at=? WHERE state='active'", (self.now(),))
-        self._authoritative_catalog = {key: path for key, (_, path) in valid.items()}
-        return valid, collided_ids
+        with self._scan_lock:
+            records: list[tuple[dict[str, Any], Path, str, str]] = []
+            active_quarantine_paths: set[str] = set()
+            observed_cache_keys: set[str] = set()
+            notes_root = self.root / "notes"
+            notes_root_resolved = notes_root.resolve()
+            for path in sorted(notes_root.glob("**/*.md")) if notes_root.exists() else []:
+                resolved = path.resolve()
+                observed_cache_keys.add(str(resolved))
+                try:
+                    if notes_root_resolved not in resolved.parents:
+                        raise QuarantineError("note path escapes notes root")
+                    relative = resolved.relative_to(notes_root_resolved)
+                    for part in relative.parts:
+                        normalized = unicodedata.normalize("NFC", part)
+                        stem = normalized.split(".", 1)[0].casefold()
+                        if normalized != part or stem in RESERVED_NAMES or part in {".", ".."}:
+                            raise QuarantineError("unsafe note path")
+                    collision_key = "/".join(
+                        unicodedata.normalize("NFC", part).casefold() for part in relative.parts
+                    )
+                    note = self._cached_parse_note(path, resolved=resolved)
+                    records.append((note, resolved, note["id"].casefold(), collision_key))
+                except Exception as exc:
+                    self._record_quarantine(path, str(exc))
+                    active_quarantine_paths.add(str(resolved.relative_to(self.root.resolve())))
+            for cache_key in set(self._note_scan_cache) - observed_cache_keys:
+                self._note_scan_cache.pop(cache_key, None)
+            by_id: dict[str, list[tuple[dict[str, Any], Path, str, str]]] = {}
+            by_path: dict[str, list[tuple[dict[str, Any], Path, str, str]]] = {}
+            for record in records:
+                by_id.setdefault(record[2], []).append(record)
+                by_path.setdefault(record[3], []).append(record)
+            collision_records = {
+                (record[1], record[2])
+                for group in [*by_id.values(), *by_path.values()]
+                if len(group) > 1
+                for record in group
+            }
+            collided_ids = {record[2] for record in records if (record[1], record[2]) in collision_records}
+            valid: dict[str, tuple[dict[str, Any], Path]] = {}
+            for note, path, id_key, _ in records:
+                if (path, id_key) in collision_records:
+                    self._record_quarantine(path, "duplicate note id or normalized path collision")
+                    active_quarantine_paths.add(str(path.resolve().relative_to(self.root.resolve())))
+                else:
+                    valid[id_key] = (note, path)
+            with self._connect(self.ops_path) as conn:
+                if active_quarantine_paths:
+                    placeholders = ",".join("?" for _ in active_quarantine_paths)
+                    conn.execute(
+                        f"UPDATE quarantine SET state='resolved', resolved_at=? WHERE state='active' AND path NOT IN ({placeholders})",
+                        (self.now(), *sorted(active_quarantine_paths)),
+                    )
+                else:
+                    conn.execute("UPDATE quarantine SET state='resolved', resolved_at=? WHERE state='active'", (self.now(),))
+            self._authoritative_catalog = {key: path for key, (_, path) in valid.items()}
+            return valid, collided_ids
 
     def _record_quarantine(self, path: Path, reason: str) -> None:
         with self._connect(self.ops_path) as conn:
@@ -1607,18 +1695,33 @@ class MemoryService:
             "consistency": "current" if indexed_hash == source_hash else "stale",
         }
 
-    def index_status(self) -> dict[str, Any]:
+    def index_status(self, *, include_lag_records: bool = False) -> dict[str, Any]:
         valid, collided_ids = self._scan_notes()
-        statuses = [self.note_consistency(note["id"]) for note, _ in valid.values() if note["id"].casefold() not in collided_ids]
-        source_revision = max((item["sourceRevision"] for item in statuses), default=0)
-        indexed_revision = max((item["indexedRevision"] for item in statuses), default=0)
-        degraded = ["index-stale"] if any(item["consistency"] == "stale" for item in statuses) else []
-        return {
+        with self._connect(self.index_path) as conn:
+            manifest = {
+                str(row["note_id"]).casefold(): (int(row["revision"]), row["content_hash"])
+                for row in conn.execute("SELECT note_id,revision,content_hash FROM manifest")
+            }
+        source_revision = indexed_revision = lag_records = 0
+        for note, path in valid.values():
+            key = note["id"].casefold()
+            if key in collided_ids:
+                continue
+            indexed, indexed_hash = manifest.get(key, (0, None))
+            source_hash = self._cached_note_revision(path, note, verified_current=True)
+            current = indexed_hash == source_hash
+            source_revision = max(source_revision, indexed if current else indexed + 1)
+            indexed_revision = max(indexed_revision, indexed)
+            lag_records += not current
+        result = {
             "sourceRevision": source_revision,
             "indexedRevision": indexed_revision,
             "consistency": "eventual",
-            "degraded": degraded,
+            "degraded": ["index-stale"] if lag_records else [],
         }
+        if include_lag_records:
+            result["lagRecords"] = lag_records
+        return result
 
     def rebuild_index(self, *, failpoint: str | Callable[[str], None] | None = None) -> int:
         if not self.ops_path.exists():

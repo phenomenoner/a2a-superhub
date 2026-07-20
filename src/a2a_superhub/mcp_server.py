@@ -23,7 +23,7 @@ from .client import HubClient, HubClientError
 
 
 PROTOCOL_VERSION = "2025-11-25"
-SERVER_VERSION = "0.1.0"
+SERVER_VERSION = "0.2.0"
 _RESOURCE_PART = re.compile(r"[A-Za-z0-9._:-]{1,200}")
 
 

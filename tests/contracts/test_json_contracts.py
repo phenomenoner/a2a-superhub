@@ -3,9 +3,15 @@ from __future__ import annotations
 import ipaddress
 import json
 import re
+import tempfile
 import unittest
 import unicodedata
+import zipfile
 from pathlib import Path
+
+from a2a_superhub.auth import Principal
+from a2a_superhub.operations import BackupManager, OperationsDiagnostics
+from a2a_superhub.store import HubStore
 
 try:
     from jsonschema import Draft202012Validator, FormatChecker
@@ -127,6 +133,90 @@ class JsonSchemaContractTests(unittest.TestCase):
             },
         }
         self.assertEqual([], list(Draft202012Validator(schema, format_checker=FormatChecker()).iter_errors(instance)))
+
+    def test_operational_backup_restore_and_diagnostics_contracts(self) -> None:
+        schema = load_json(ROOT / "schemas" / "operations-v1.schema.json")
+        Draft202012Validator.check_schema(schema)
+        admin = Principal("local.operator", "operator", "tok_contract", frozenset({"hub.admin"}))
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state = root / "state"
+            HubStore(state).init()
+            archive_path = root / "backup.zip"
+            BackupManager(state).create(archive_path)
+            with zipfile.ZipFile(archive_path) as archive:
+                manifest = json.loads(archive.read("manifest.json"))
+            restore = BackupManager.restore(archive_path, root / "restored")
+            diagnostics = OperationsDiagnostics(root / "restored").collect(admin)
+        for definition, instance in (
+            ("backupManifest", manifest),
+            ("restoreResult", restore),
+            ("diagnostics", diagnostics),
+            ("singleHubSoak", {
+                "schema": "a2a-superhub.single-hub-soak.v1",
+                "startedAt": "2026-07-20T00:00:00Z",
+                "completedAt": "2026-07-21T00:00:00Z",
+                "expectedDurationSeconds": 86400,
+                "observedDurationSeconds": 86401,
+                "platform": "windows",
+                "python": "3.12.0",
+                "commit": "a" * 40,
+                "configuration": {
+                    "operationIntervalSeconds": 120,
+                    "artifactIntervalSeconds": 120,
+                    "restartIntervalSeconds": 1800,
+                    "sampleIntervalSeconds": 60,
+                },
+                "workload": {
+                    "tasks": 1, "notes": 2, "artifacts": 1, "filesystemWrites": 1,
+                    "searches": 1, "inboxAcknowledgements": 1, "authorizationChecks": 1,
+                    "connectionRetries": 0, "expectedDeliveries": 2,
+                },
+                "restarts": {"graceful": 1, "controlledKill": 1},
+                "audit": {
+                    "lostTasks": 0, "lostNotes": 0, "lostArtifacts": 0,
+                    "lostDeliveries": 0, "unacknowledgedDeliveries": 0,
+                    "activeQuarantine": 0, "pendingJobs": 0, "pendingTerminalOutbox": 0,
+                    "privateAuthorizationLeaks": 0, "pdfDerivationSearchVerified": True,
+                },
+                "resources": {},
+                "failures": [], "passed": True,
+            }),
+            ("releaseGate", {
+                "schema": "a2a-superhub.release-gate.v1",
+                "startedAt": "2026-07-20T00:00:00Z",
+                "completedAt": "2026-07-20T01:00:00Z",
+                "currentRef": "a" * 40,
+                "previousRef": "b" * 40,
+                "versions": {
+                    "previous": "0.1.0", "currentWheelClean": "0.2.0",
+                    "currentSdistClean": "0.2.0", "currentWheelSkill": "0.2.0",
+                    "currentSdistSkill": "0.2.0", "current": "0.2.0",
+                    "rollback": "0.1.0", "rollbackSkill": "0.1.0",
+                    "forward": "0.2.0", "forwardSkill": "0.2.0",
+                },
+                "artifacts": {
+                    "previousWheelSha256": "a" * 64, "previousSdistSha256": "b" * 64,
+                    "currentWheelSha256": "c" * 64, "currentSdistSha256": "d" * 64,
+                },
+                "checks": {
+                    "currentWheelCleanInstall": True, "currentSdistCleanInstall": True,
+                    "currentSkillCleanInstall": True, "upgradeFromPrevious": True,
+                    "authoritativeBackupRestore": True, "rollbackVersion": True,
+                    "rollbackReadsTask": True, "rollbackReadsArtifact": True,
+                    "forwardUpgrade": True, "skillUpgradeValidated": True,
+                    "skillUpgradeBackupCreated": True, "skillRollbackAndForward": True,
+                    "diagnosticsPayloadFree": True,
+                },
+                "passed": True,
+            }),
+        ):
+            selected = {"$schema": schema["$schema"], "$defs": schema["$defs"], "$ref": f"#/$defs/{definition}"}
+            self.assertEqual(
+                [],
+                list(Draft202012Validator(selected, format_checker=FormatChecker()).iter_errors(instance)),
+                definition,
+            )
 
 
 if __name__ == "__main__":

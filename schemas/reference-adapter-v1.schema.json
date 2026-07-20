@@ -17,7 +17,7 @@
     "capabilities": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema", "memoryFoundation", "memorySharing", "timelineGraph", "safeWakeup", "taskLog", "watcherSideEffects", "runtimeWatcher", "adapter", "memoryFull", "memorySearch", "artifactUploads", "a2aPartMapping", "maxArtifactBytes", "artifactDerivation", "derivedTextTrust", "retrieval", "principal"],
+      "required": ["schema", "memoryFoundation", "memorySharing", "timelineGraph", "safeWakeup", "taskLog", "watcherSideEffects", "runtimeWatcher", "adapter", "memoryFull", "memorySearch", "artifactUploads", "a2aPartMapping", "maxArtifactBytes", "artifactDerivation", "derivedTextTrust", "operationalDiagnostics", "offlineAuthoritativeBackup", "recoverableRetention", "retrieval", "principal"],
       "properties": {
         "schema": {"const": "a2a-superhub.capabilities.v1"},
         "memoryFoundation": {"type": "boolean"},
@@ -43,6 +43,9 @@
         "maxArtifactBytes": {"type": "integer", "minimum": 1},
         "artifactDerivation": {"type": "boolean"},
         "derivedTextTrust": {"const": "untrusted-data"},
+        "operationalDiagnostics": {"type": "boolean"},
+        "offlineAuthoritativeBackup": {"type": "boolean"},
+        "recoverableRetention": {"type": "boolean"},
         "retrieval": {
           "type": "object",
           "required": ["provider"],

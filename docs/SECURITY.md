@@ -77,3 +77,21 @@ source ID, authoritative checksum, and provider version. Current source artifact
 authorization is repeated for every derived-note read and search result, so a
 stale index cannot preserve broader visibility. Admin purge removes only the
 derived note/index; the source CAS has no corresponding delete route.
+
+## Operational state enforcement
+
+The running hub holds an exclusive state lease. Offline backup, retention,
+restore, and search migration refuse to run against active state. Backup uses
+SQLite snapshots, refuses symlinked authoritative files, classifies every member,
+and fails closed when a public-classified target would contain private or secret
+state. The explicit public override records a warning and never removes secrets
+or grants publication authority.
+
+Restore accepts only an exact, duplicate-free member set under safe relative
+paths, verifies declared sizes and SHA-256 values, checks restored artifact
+content, rebuilds derived indexes, and requires a nonexistent destination.
+Recoverable retention blocks unacknowledged notes and referenced artifacts;
+private/direct content requires separate authority. Search-provider activation
+requires ordered, per-principal authorized result parity, and embedded URL
+credentials are rejected. See [OPERATIONS.md](OPERATIONS.md) for the operator
+sequence and remaining limitations.

@@ -13,6 +13,14 @@ from .store import HubStore
 from .auth import Principal
 from .derivation import DerivationService
 from .memory import MemoryService
+from .operations import (
+    BackupManager,
+    OperationsDiagnostics,
+    OperationsError,
+    RetentionManager,
+    SearchMigrationManager,
+    load_search_provider_config,
+)
 from .skill_package import SkillInstallError, install_skill, skill_source_path, uninstall_skill, validate_skill
 
 
@@ -36,12 +44,13 @@ def cmd_init(args: argparse.Namespace) -> int:
 def cmd_serve(args: argparse.Namespace) -> int:
     token = args.token or os.environ.get("A2A_SUPERHUB_TOKEN")
     principals = _load_json(args.principals) if args.principals else None
+    search_mode, search_url = _resolved_search_provider(args)
     run_server(
         args.state, host=args.host, port=args.port, token=token, enable_memory=args.enable_memory,
         enable_delivery=args.enable_delivery, enable_task_log=args.enable_task_log,
         enable_watcher_side_effects=args.enable_watcher_side_effects,
         task_log_intents=set(args.task_log_intent or []), principals=principals,
-        search_mode=args.search_mode, search_url=args.search_url,
+        search_mode=search_mode, search_url=search_url,
         search_cache_dir=args.search_cache_dir,
         enable_derivers=args.enable_derivers, max_artifact_bytes=args.max_artifact_bytes,
     )
@@ -209,14 +218,22 @@ def cmd_memory_reindex(args: argparse.Namespace) -> int:
 
 
 def _search_service(args: argparse.Namespace) -> MemoryService:
+    search_mode, search_url = _resolved_search_provider(args)
     provider = None
-    if args.search_mode in {"local", "server"}:
+    if search_mode in {"local", "server"}:
         from .retrieval import QdrantRetrievalProvider
         provider = QdrantRetrievalProvider(
-            args.state, mode=args.search_mode, url=args.search_url,
+            args.state, mode=search_mode, url=search_url,
             cache_dir=args.search_cache_dir,
         )
     return MemoryService(args.state, search_provider=provider)
+
+
+def _resolved_search_provider(args: argparse.Namespace) -> tuple[str, str | None]:
+    if args.search_mode != "configured":
+        return args.search_mode, args.search_url
+    configured = load_search_provider_config(args.state)
+    return str(configured["mode"]), configured.get("url")
 
 
 def cmd_memory_search(args: argparse.Namespace) -> int:
@@ -269,6 +286,77 @@ def cmd_memory_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_operation(action) -> int:
+    try:
+        _print(action())
+        return 0
+    except OperationsError as exc:
+        _print({"ok": False, "error": {"code": type(exc).__name__, "message": str(exc)}})
+        return 2
+
+
+def cmd_operations_diagnostics(args: argparse.Namespace) -> int:
+    return _run_operation(lambda: OperationsDiagnostics(args.state).collect(_cli_principal(args)))
+
+
+def cmd_operations_backup_create(args: argparse.Namespace) -> int:
+    return _run_operation(lambda: BackupManager(args.state).create(
+        args.destination,
+        auth_config=args.auth_config,
+        target_class=args.target_class,
+        allow_sensitive_public=args.allow_sensitive_public,
+    ))
+
+
+def cmd_operations_backup_restore(args: argparse.Namespace) -> int:
+    return _run_operation(lambda: BackupManager.restore(args.archive, args.target_state))
+
+
+def cmd_operations_retention_trash_note(args: argparse.Namespace) -> int:
+    return _run_operation(lambda: RetentionManager(args.state).trash_note(
+        args.note_id, _cli_principal(args), allow_private=args.allow_private,
+    ))
+
+
+def cmd_operations_retention_trash_artifact(args: argparse.Namespace) -> int:
+    return _run_operation(lambda: RetentionManager(args.state).trash_artifact(
+        args.artifact_id, _cli_principal(args), allow_private=args.allow_private,
+    ))
+
+
+def cmd_operations_retention_restore(args: argparse.Namespace) -> int:
+    return _run_operation(lambda: RetentionManager(args.state).restore(
+        args.kind, args.object_id, _cli_principal(args),
+    ))
+
+
+def cmd_operations_retention_list(args: argparse.Namespace) -> int:
+    return _run_operation(lambda: {"items": RetentionManager(args.state).list_tombstones()})
+
+
+def _load_queries(path: str) -> list[dict[str, Any]]:
+    value = json.loads(Path(path).read_text(encoding="utf-8"))
+    if isinstance(value, dict):
+        value = value.get("queries")
+    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+        raise OperationsError("migration query file must contain a queries array")
+    return value
+
+
+def cmd_operations_search_migrate(args: argparse.Namespace) -> int:
+    return _run_operation(lambda: SearchMigrationManager(args.state).drill(
+        args.server_url,
+        queries=_load_queries(args.queries),
+        cache_dir=args.search_cache_dir,
+        parity_min=args.parity_min,
+        activate=args.activate,
+    ))
+
+
+def cmd_operations_search_rollback(args: argparse.Namespace) -> int:
+    return _run_operation(lambda: SearchMigrationManager(args.state).rollback())
+
+
 def cmd_skill_path(args: argparse.Namespace) -> int:
     _print({"skill": "operate-a2a-superhub", "path": str(skill_source_path())})
     return 0
@@ -318,7 +406,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--enable-watcher-side-effects", action="store_true", help="Allow local-admin missing-ID repair")
     p.add_argument("--task-log-intent", action="append", help="Allowlisted task intent for sedimentation")
     p.add_argument("--principals", help="Static bearer-token to principal JSON registry")
-    p.add_argument("--search-mode", choices=["keyword", "local", "server"], default="keyword")
+    p.add_argument("--search-mode", choices=["keyword", "local", "server", "configured"], default="keyword")
     p.add_argument("--search-url", help="Explicit Qdrant URL for server search mode")
     p.add_argument("--search-cache-dir", help="FastEmbed model cache directory")
     p.add_argument("--enable-derivers", action="store_true", help="Enable optional PDF text and image OCR derivation; requires --enable-memory")
@@ -407,7 +495,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("query")
     p.add_argument("--mode", choices=["auto", "hybrid", "keyword"], default="auto")
     p.add_argument("--limit", type=int, default=50)
-    p.add_argument("--search-mode", choices=["keyword", "local", "server"], default="keyword")
+    p.add_argument("--search-mode", choices=["keyword", "local", "server", "configured"], default="keyword")
     p.add_argument("--search-url")
     p.add_argument("--search-cache-dir")
     p.set_defaults(func=cmd_memory_search)
@@ -442,6 +530,51 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_memory_graph)
     p = memory.add_parser("stats", help="Print sanitized memory operational stats")
     p.set_defaults(func=cmd_memory_stats)
+
+    operations = sub.add_parser(
+        "operations", help="Diagnose, back up, restore, migrate, or apply recoverable retention"
+    ).add_subparsers(dest="operations_command", required=True)
+    p = operations.add_parser("diagnostics", help="Print payload-free state, queue, version, and resource diagnostics")
+    p.set_defaults(func=cmd_operations_diagnostics)
+
+    backup = operations.add_parser("backup", help="Create or restore an authoritative state backup").add_subparsers(dest="backup_command", required=True)
+    p = backup.add_parser("create", help="Create an integrity-manifested backup while the hub is stopped")
+    p.add_argument("--destination", required=True)
+    p.add_argument("--auth-config", help="Principal registry JSON to include at config/principals.json")
+    p.add_argument("--target-class", choices=["private", "public"], default="private")
+    p.add_argument("--allow-sensitive-public", action="store_true", help="Explicitly record and allow sensitive state in a public-classified backup")
+    p.set_defaults(func=cmd_operations_backup_create)
+    p = backup.add_parser("restore", help="Verify and restore into a nonexistent clean state directory")
+    p.add_argument("--archive", required=True)
+    p.add_argument("--target-state", required=True)
+    p.set_defaults(func=cmd_operations_backup_restore)
+
+    retention = operations.add_parser("retention", help="Move authoritative objects to recoverable trash or restore them").add_subparsers(dest="retention_command", required=True)
+    p = retention.add_parser("trash-note", help="Trash an acknowledged memory note without hard deletion")
+    p.add_argument("note_id")
+    p.add_argument("--allow-private", action="store_true", help="Explicitly allow retention of private/direct content")
+    p.set_defaults(func=cmd_operations_retention_trash_note)
+    p = retention.add_parser("trash-artifact", help="Trash an unreferenced artifact manifest while retaining its blob")
+    p.add_argument("artifact_id")
+    p.add_argument("--allow-private", action="store_true", help="Explicitly allow retention of private/direct content")
+    p.set_defaults(func=cmd_operations_retention_trash_artifact)
+    p = retention.add_parser("restore", help="Restore a tombstoned memory note or artifact")
+    p.add_argument("kind", choices=["memory-note", "artifact"])
+    p.add_argument("object_id")
+    p.set_defaults(func=cmd_operations_retention_restore)
+    p = retention.add_parser("list", help="List sanitized tombstone status")
+    p.set_defaults(func=cmd_operations_retention_list)
+
+    migration = operations.add_parser("search-migration", help="Drill Qdrant local-to-server parity and rollback").add_subparsers(dest="migration_command", required=True)
+    p = migration.add_parser("drill", help="Rebuild both providers and require query parity before optional activation")
+    p.add_argument("--server-url", required=True)
+    p.add_argument("--queries", required=True, help="JSON file containing sanitized parity queries")
+    p.add_argument("--search-cache-dir")
+    p.add_argument("--parity-min", type=float, default=1.0)
+    p.add_argument("--activate", action="store_true", help="Record server mode only after the parity gate passes")
+    p.set_defaults(func=cmd_operations_search_migrate)
+    p = migration.add_parser("rollback", help="Restore the previously recorded search provider mode")
+    p.set_defaults(func=cmd_operations_search_rollback)
 
     skill = sub.add_parser("skill", help="Discover, validate, install, or remove the product Skill").add_subparsers(dest="skill_command", required=True)
     p = skill.add_parser("path", help="Print the canonical packaged Skill path")

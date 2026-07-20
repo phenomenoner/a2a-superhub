@@ -1,7 +1,7 @@
 {
   "contract": "a2a-superhub.agent-surface.v1",
-  "productBaseline": "0.1.0",
-  "status": "multimodal-artifact-derivation",
+  "productBaseline": "0.2.0",
+  "status": "operational-controls",
   "packageExtrasContract": "a2a-superhub.package-extras.v1",
   "apiVersions": ["memory.v1", "artifacts.v1"],
   "noteSchemas": ["a2a-superhub.memory.note.v1"],
@@ -39,7 +39,17 @@
     "pdfTextDeriver": true,
     "tesseractOcrProvider": true,
     "derivedTextTrust": "untrusted-data",
-    "derivedVisibilityFinalAuthorization": true
+    "derivedVisibilityFinalAuthorization": true,
+    "authoritativeBackup": true,
+    "cleanRestore": true,
+    "publicBackupGuard": true,
+    "recoverableRetention": true,
+    "operationalDiagnostics": true,
+    "qdrantMigrationDrill": true,
+    "configuredSearchProvider": true,
+    "singleHubSoakHarness": false,
+    "upgradeRollbackGate": false,
+    "operationallyReady": false
   },
   "limits": {
     "httpJsonBytes": 1048576,
@@ -51,8 +61,8 @@
     "inlineRawPartBytes": 262144
   },
   "cli": {
-    "manifestRevision": 5,
-    "implemented": ["init", "serve", "task-create", "task-get", "task-list", "task-cancel", "event-add", "artifact-put", "artifact-get", "artifact-derive", "artifact-derivation-status", "artifact-derivation-purge", "agent-register", "agent-list", "memory-note-create", "memory-note-read", "memory-reindex", "memory-search", "memory-search-reindex", "memory-inbox-fetch", "memory-inbox-ack", "memory-wakeup", "memory-timeline", "memory-graph", "memory-stats", "memory-mcp", "skill-path", "skill-validate", "skill-install-codex", "skill-uninstall-codex"],
+    "manifestRevision": 6,
+    "implemented": ["init", "serve", "task-create", "task-get", "task-list", "task-cancel", "event-add", "artifact-put", "artifact-get", "artifact-derive", "artifact-derivation-status", "artifact-derivation-purge", "agent-register", "agent-list", "memory-note-create", "memory-note-read", "memory-reindex", "memory-search", "memory-search-reindex", "memory-inbox-fetch", "memory-inbox-ack", "memory-wakeup", "memory-timeline", "memory-graph", "memory-stats", "memory-mcp", "operations-diagnostics", "operations-backup-create", "operations-backup-restore", "operations-retention-trash-note", "operations-retention-trash-artifact", "operations-retention-restore", "operations-retention-list", "operations-search-migration-drill", "operations-search-migration-rollback", "skill-path", "skill-validate", "skill-install-codex", "skill-uninstall-codex"],
     "planned": []
   }
 }

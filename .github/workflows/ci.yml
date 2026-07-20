@@ -44,3 +44,21 @@ jobs:
       - run: python -m unittest tests.contracts.test_packaging_contract -v
         env:
           A2A_TEST_EXTRA: ${{ matrix.extra }}
+
+  release-artifacts:
+    runs-on: ubuntu-latest
+    env:
+      A2A_PREVIOUS_RELEASE_REF: 71b55e683ad469552f00acde9d82e08f381aa4ad
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python tools/release_gate.py --previous-ref "$A2A_PREVIOUS_RELEASE_REF" --evidence release-gate.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-gate-evidence
+          path: release-gate.json

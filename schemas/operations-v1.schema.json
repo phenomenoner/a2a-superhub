@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://phenomenoner.github.io/a2a-superhub/schemas/operations-v1.schema.json",
+  "title": "A2A Superhub operational controls",
+  "contract": "a2a-superhub.operations.v1",
+  "$defs": {
+    "fileEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "bytes", "classification"],
+      "properties": {
+        "path": {"type": "string", "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "bytes": {"type": "integer", "minimum": 0},
+        "classification": {"enum": ["operational", "shared", "private", "secret"]}
+      }
+    },
+    "backupManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "productVersion", "createdAt", "targetClass", "containsSensitive", "overrideRecorded", "warnings", "files", "excludedDerived"],
+      "properties": {
+        "schema": {"const": "a2a-superhub.backup.v1"},
+        "productVersion": {"type": "string"},
+        "createdAt": {"type": "string", "format": "date-time"},
+        "targetClass": {"enum": ["private", "public"]},
+        "containsSensitive": {"type": "boolean"},
+        "overrideRecorded": {"type": "boolean"},
+        "warnings": {"type": "array", "items": {"type": "string"}},
+        "files": {"type": "array", "items": {"$ref": "#/$defs/fileEntry"}},
+        "excludedDerived": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      }
+    },
+    "restoreResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "productVersion", "integrity", "fileCount", "derivedIndexes"],
+      "properties": {
+        "schema": {"const": "a2a-superhub.restore-result.v1"},
+        "productVersion": {"type": "string"},
+        "integrity": {"const": "verified"},
+        "fileCount": {"type": "integer", "minimum": 0},
+        "derivedIndexes": {"const": "rebuilt-from-authoritative-state"}
+      }
+    },
+    "tombstoneResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "objectId", "state"],
+      "properties": {
+        "kind": {"enum": ["memory-note", "artifact"]},
+        "objectId": {"type": "string", "minLength": 1},
+        "state": {"enum": ["trashed", "restored"]},
+        "recoverable": {"type": "boolean"},
+        "blobRetained": {"type": "boolean"},
+        "idempotent": {"type": "boolean"},
+        "integrity": {"const": "verified"}
+      }
+    },
+    "searchProvider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "mode"],
+      "properties": {
+        "schema": {"const": "a2a-superhub.search-provider.v1"},
+        "mode": {"enum": ["keyword", "local", "server"]},
+        "url": {"type": "string", "pattern": "^https?://"},
+        "previous": {"type": "object"}
+      },
+      "allOf": [
+        {"if": {"properties": {"mode": {"const": "server"}}}, "then": {"required": ["url"]}}
+      ]
+    },
+    "singleHubSoak": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "startedAt", "completedAt", "expectedDurationSeconds", "observedDurationSeconds", "platform", "python", "commit", "configuration", "workload", "restarts", "audit", "resources", "failures", "passed"],
+      "properties": {
+        "schema": {"const": "a2a-superhub.single-hub-soak.v1"},
+        "startedAt": {"type": "string", "format": "date-time"},
+        "completedAt": {"type": "string", "format": "date-time"},
+        "expectedDurationSeconds": {"type": "number", "exclusiveMinimum": 0},
+        "observedDurationSeconds": {"type": "number", "minimum": 0},
+        "platform": {"type": "string"},
+        "python": {"type": "string"},
+        "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "configuration": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operationIntervalSeconds", "artifactIntervalSeconds", "restartIntervalSeconds", "sampleIntervalSeconds"],
+          "properties": {
+            "operationIntervalSeconds": {"type": "number", "exclusiveMinimum": 0},
+            "artifactIntervalSeconds": {"type": "number", "exclusiveMinimum": 0},
+            "restartIntervalSeconds": {"type": "number", "exclusiveMinimum": 0},
+            "sampleIntervalSeconds": {"type": "number", "exclusiveMinimum": 0}
+          }
+        },
+        "workload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tasks", "notes", "artifacts", "filesystemWrites", "searches", "inboxAcknowledgements", "authorizationChecks", "connectionRetries", "expectedDeliveries"],
+          "properties": {
+            "tasks": {"type": "integer", "minimum": 0},
+            "notes": {"type": "integer", "minimum": 0},
+            "artifacts": {"type": "integer", "minimum": 0},
+            "filesystemWrites": {"type": "integer", "minimum": 0},
+            "searches": {"type": "integer", "minimum": 0},
+            "inboxAcknowledgements": {"type": "integer", "minimum": 0},
+            "authorizationChecks": {"type": "integer", "minimum": 0},
+            "connectionRetries": {"type": "integer", "minimum": 0},
+            "expectedDeliveries": {"type": "integer", "minimum": 0}
+          }
+        },
+        "restarts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["graceful", "controlledKill"],
+          "properties": {
+            "graceful": {"type": "integer", "minimum": 0},
+            "controlledKill": {"type": "integer", "minimum": 0}
+          }
+        },
+        "audit": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["lostTasks", "lostNotes", "lostArtifacts", "lostDeliveries", "unacknowledgedDeliveries", "activeQuarantine", "pendingJobs", "pendingTerminalOutbox", "privateAuthorizationLeaks", "pdfDerivationSearchVerified"],
+          "properties": {
+            "lostTasks": {"type": "integer", "minimum": 0},
+            "lostNotes": {"type": "integer", "minimum": 0},
+            "lostArtifacts": {"type": "integer", "minimum": 0},
+            "lostDeliveries": {"type": "integer", "minimum": 0},
+            "unacknowledgedDeliveries": {"type": "integer", "minimum": 0},
+            "activeQuarantine": {"type": "integer", "minimum": 0},
+            "pendingJobs": {"type": "integer", "minimum": 0},
+            "pendingTerminalOutbox": {"type": "integer", "minimum": 0},
+            "privateAuthorizationLeaks": {"type": "integer", "minimum": 0},
+            "pdfDerivationSearchVerified": {"type": "boolean"}
+          }
+        },
+        "resources": {"type": "object"},
+        "failures": {"type": "array", "items": {"type": "string"}},
+        "passed": {"type": "boolean"}
+      }
+    },
+    "releaseGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "startedAt", "completedAt", "currentRef", "previousRef", "versions", "artifacts", "checks", "passed"],
+      "properties": {
+        "schema": {"const": "a2a-superhub.release-gate.v1"},
+        "startedAt": {"type": "string", "format": "date-time"},
+        "completedAt": {"type": "string", "format": "date-time"},
+        "currentRef": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "previousRef": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "versions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["previous", "currentWheelClean", "currentSdistClean", "currentWheelSkill", "currentSdistSkill", "current", "rollback", "rollbackSkill", "forward", "forwardSkill"],
+          "properties": {
+            "previous": {"type": "string"},
+            "currentWheelClean": {"type": "string"},
+            "currentSdistClean": {"type": "string"},
+            "currentWheelSkill": {"type": "string"},
+            "currentSdistSkill": {"type": "string"},
+            "current": {"type": "string"},
+            "rollback": {"type": "string"},
+            "rollbackSkill": {"type": "string"},
+            "forward": {"type": "string"},
+            "forwardSkill": {"type": "string"}
+          }
+        },
+        "artifacts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["previousWheelSha256", "previousSdistSha256", "currentWheelSha256", "currentSdistSha256"],
+          "properties": {
+            "previousWheelSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "previousSdistSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "currentWheelSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "currentSdistSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          }
+        },
+        "checks": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["currentWheelCleanInstall", "currentSdistCleanInstall", "currentSkillCleanInstall", "upgradeFromPrevious", "authoritativeBackupRestore", "rollbackVersion", "rollbackReadsTask", "rollbackReadsArtifact", "forwardUpgrade", "skillUpgradeValidated", "skillUpgradeBackupCreated", "skillRollbackAndForward", "diagnosticsPayloadFree"],
+          "properties": {
+            "currentWheelCleanInstall": {"type": "boolean"},
+            "currentSdistCleanInstall": {"type": "boolean"},
+            "currentSkillCleanInstall": {"type": "boolean"},
+            "upgradeFromPrevious": {"type": "boolean"},
+            "authoritativeBackupRestore": {"type": "boolean"},
+            "rollbackVersion": {"type": "boolean"},
+            "rollbackReadsTask": {"type": "boolean"},
+            "rollbackReadsArtifact": {"type": "boolean"},
+            "forwardUpgrade": {"type": "boolean"},
+            "skillUpgradeValidated": {"type": "boolean"},
+            "skillUpgradeBackupCreated": {"type": "boolean"},
+            "skillRollbackAndForward": {"type": "boolean"},
+            "diagnosticsPayloadFree": {"type": "boolean"}
+          }
+        },
+        "passed": {"type": "boolean"}
+      }
+    },
+    "diagnostics": {
+      "type": "object",
+      "required": ["schema", "productVersion", "generatedAt", "payloadFree", "stores", "resources"],
+      "properties": {
+        "schema": {"const": "a2a-superhub.operations-diagnostics.v1"},
+        "productVersion": {"type": "string"},
+        "generatedAt": {"type": "string", "format": "date-time"},
+        "payloadFree": {"const": true},
+        "stores": {
+          "type": "object",
+          "required": ["memory"],
+          "properties": {
+            "memory": {
+              "type": "object",
+              "required": ["pendingJobs", "deliveries", "consumers", "activeQuarantine", "index"],
+              "properties": {
+                "pendingJobs": {"type": "integer", "minimum": 0},
+                "deliveries": {"type": "integer", "minimum": 0},
+                "consumers": {"type": "integer", "minimum": 0},
+                "activeQuarantine": {"type": "integer", "minimum": 0},
+                "index": {
+                  "type": "object",
+                  "required": ["sourceRevision", "indexedRevision", "lagRecords", "degraded"],
+                  "properties": {
+                    "sourceRevision": {"type": "integer", "minimum": 0},
+                    "indexedRevision": {"type": "integer", "minimum": 0},
+                    "lagRecords": {"type": "integer", "minimum": 0},
+                    "degraded": {"type": "array", "items": {"type": "string"}}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["stateFiles", "stateBytes"],
+          "properties": {
+            "stateFiles": {"type": "integer", "minimum": 0},
+            "stateBytes": {"type": "integer", "minimum": 0}
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

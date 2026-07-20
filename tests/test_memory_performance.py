@@ -2,9 +2,13 @@ import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 from a2a_superhub.auth import Principal
-from a2a_superhub.memory import MemoryService, note_path
+from a2a_superhub import memory as memory_module
+from a2a_superhub import operations as operations_module
+from a2a_superhub.memory import MemoryService, atomic_write, note_path, serialize_note
+from a2a_superhub.operations import OperationsDiagnostics
 
 
 class CountingMemoryService(MemoryService):
@@ -88,6 +92,104 @@ class MemoryBatchingTests(unittest.TestCase):
             restarted.init()
             self.assertLessEqual(restarted.connections, 10)
             self.assertEqual(len(restarted.list_deliveries()), 200)
+
+    def test_index_lag_diagnostics_use_one_manifest_snapshot_not_one_connection_per_note(self):
+        principal = Principal(
+            "agent.alpha", "agent", "tok_alpha",
+            frozenset({"memory.read", "memory.write"}),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            writer = MemoryService(tmp)
+            for index in range(100):
+                writer.create_note(
+                    {
+                        "type": "observation", "title": f"Index {index}",
+                        "visibility": "private", "body": "bounded lag fixture",
+                    },
+                    principal,
+                    idempotency_key=f"index-{index}",
+                )
+            reader = ConnectionCountingMemoryService(tmp)
+            status = reader.index_status(include_lag_records=True)
+            self.assertEqual(0, status["lagRecords"])
+            self.assertLessEqual(reader.connections, 3)
+
+    def test_index_lag_scan_only_reparses_changed_notes(self):
+        principal = Principal(
+            "agent.alpha", "agent", "tok_alpha",
+            frozenset({"memory.read", "memory.write"}),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            service = MemoryService(tmp)
+            for index in range(20):
+                service.create_note(
+                    {
+                        "type": "observation", "title": f"Cached {index}",
+                        "visibility": "private", "body": "unchanged scan fixture",
+                    },
+                    principal,
+                    idempotency_key=f"cached-{index}",
+                )
+            service.index_status(include_lag_records=True)
+            original_parse = memory_module.parse_note
+            parse_calls = 0
+
+            def counted_parse(data):
+                nonlocal parse_calls
+                parse_calls += 1
+                return original_parse(data)
+
+            with patch.object(memory_module, "parse_note", side_effect=counted_parse):
+                self.assertEqual(0, service.index_status(include_lag_records=True)["lagRecords"])
+                self.assertEqual(0, parse_calls)
+                note = service.read_note(next(iter(service._authoritative_catalog)), principal)
+                note["body"] = "changed outside the service"
+                atomic_write(note_path(service.root, note["id"]), serialize_note(note))
+                self.assertEqual(1, service.index_status(include_lag_records=True)["lagRecords"])
+                self.assertEqual(1, parse_calls)
+
+    def test_repeated_diagnostics_reuse_validated_notes_and_one_inventory_pass(self):
+        writer = Principal(
+            "agent.alpha", "agent", "tok_alpha",
+            frozenset({"memory.read", "memory.write"}),
+        )
+        admin = Principal("local.operator", "operator", "tok_admin", frozenset({"hub.admin"}))
+        with tempfile.TemporaryDirectory() as tmp:
+            service = MemoryService(tmp)
+            for index in range(20):
+                service.create_note(
+                    {
+                        "type": "observation", "title": f"Diagnostic {index}",
+                        "visibility": "private", "body": "payload-free inventory fixture",
+                    },
+                    writer,
+                    idempotency_key=f"diagnostic-{index}",
+                )
+            diagnostics = OperationsDiagnostics(tmp, memory_service=service)
+            original_parse = memory_module.parse_note
+            parse_calls = 0
+
+            def counted_parse(data):
+                nonlocal parse_calls
+                parse_calls += 1
+                return original_parse(data)
+
+            with patch.object(
+                operations_module, "_state_inventory", wraps=operations_module._state_inventory,
+            ) as inventory:
+                first = diagnostics.collect(admin)
+            self.assertEqual(1, inventory.call_count)
+            with patch.object(memory_module, "parse_note", side_effect=counted_parse):
+                second = diagnostics.collect(admin)
+            self.assertEqual(0, parse_calls)
+            self.assertEqual(20, first["stores"]["memory"]["records"])
+            self.assertEqual(first["stores"]["memory"]["index"], second["stores"]["memory"]["index"])
+
+    def test_diagnostics_reject_a_memory_cache_for_another_state(self):
+        admin = Principal("local.operator", "operator", "tok_admin", frozenset({"hub.admin"}))
+        with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
+            with self.assertRaisesRegex(ValueError, "same state"):
+                OperationsDiagnostics(first, memory_service=MemoryService(second)).collect(admin)
 
 
 if __name__ == "__main__":

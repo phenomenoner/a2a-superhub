@@ -1,13 +1,13 @@
 {
   "contract": "a2a-superhub.package-extras.v1",
-  "productBaseline": "0.1.0",
+  "productBaseline": "0.2.0",
   "coreRuntimeDependencies": [],
   "installationDoesNotEnableUnimplementedFeatures": true,
   "extras": {
     "memory-core": {
       "dependencies": ["PyYAML==6.0.3", "watchdog==6.0.0"],
       "purpose": "Lightweight YAML parsing and filesystem observation for durable memory and offline sharing.",
-      "runtimeImplemented": false
+      "runtimeImplemented": true
     },
     "search": {
       "dependencies": ["qdrant-client[fastembed]==1.18.0"],

@@ -4,7 +4,7 @@
   "supportedInterfaces": [
     {"url": "http://127.0.0.1:8787/a2a/v1", "protocolBinding": "JSONRPC", "protocolVersion": "1.0"}
   ],
-  "version": "0.1.0",
+  "version": "0.2.0",
   "capabilities": {
     "streaming": false,
     "pushNotifications": false,

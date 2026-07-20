@@ -51,6 +51,20 @@ validation, contained install, and ownership-aware uninstall. Reindex builds a
 new derived-index generation and atomically swaps it; it never rebuilds or
 deletes the ops database.
 
+## Operational diagnostics and local controls
+
+`GET /v1/operations/diagnostics` requires `hub.admin` and returns the
+`a2a-superhub.operations-diagnostics.v1` payload-free view: store counts,
+pending queue/outbox and quarantine counts, source/index revision, retrieval
+model identity, product version, and aggregate state bytes. It never returns
+task payloads, note bodies, token material, or local paths.
+
+Authoritative backup/clean restore, recoverable retention, and Qdrant migration
+are intentionally local CLI operations, not remote mutation endpoints. The
+running hub holds a state lease, so these commands fail closed until it is
+stopped. Their machine contracts are in `schemas/operations-v1.schema.json` and
+operator procedures are in [OPERATIONS.md](OPERATIONS.md).
+
 ## MCP sidecar
 
 Install `.[mcp]` and launch `a2a-superhub-mcp`. The sidecar reads
