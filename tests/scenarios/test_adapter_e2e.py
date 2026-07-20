@@ -14,7 +14,7 @@ from a2a_superhub.server import make_server
 PRINCIPALS = {
     "alpha-token": {
         "subject": "agent.alpha", "kind": "agent", "tokenId": "tok_alpha",
-        "scopes": ["memory.read", "memory.write", "memory.share", "task.read", "task.write", "artifact.read", "artifact.write"],
+        "scopes": ["memory.read", "memory.write", "memory.share", "task.read", "task.write", "artifact.read", "artifact.write", "artifact.share"],
     },
     "beta-token": {
         "subject": "agent.beta", "kind": "agent", "tokenId": "tok_beta",
@@ -54,7 +54,7 @@ class AdapterOfflineEndToEndTests(unittest.TestCase):
                     "POST", "/v1/artifacts",
                     body={
                         "contentBase64": base64.b64encode(artifact_bytes).decode("ascii"),
-                        "filename": "gateway-observation.txt", "mediaType": "text/plain", "createdBy": "agent.alpha",
+                        "filename": "gateway-observation.txt", "mediaType": "text/plain", "visibility": "shared",
                     },
                 )
                 alpha = ReferenceAdapter(

@@ -1,9 +1,9 @@
 {
   "contract": "a2a-superhub.agent-surface.v1",
   "productBaseline": "0.1.0",
-  "status": "agent-protocol-integration",
+  "status": "multimodal-artifact-derivation",
   "packageExtrasContract": "a2a-superhub.package-extras.v1",
-  "apiVersions": ["memory.v1"],
+  "apiVersions": ["memory.v1", "artifacts.v1"],
   "noteSchemas": ["a2a-superhub.memory.note.v1"],
   "a2aInterfaces": [
     {"binding": "JSONRPC", "protocolVersion": "legacy", "implemented": true},
@@ -31,17 +31,28 @@
     "deliveryDefaultEnabled": false,
     "taskLogDefaultEnabled": false,
     "watcherSideEffectsDefaultEnabled": false
+    ,"rawArtifactUpload": true,
+    "resumableArtifactUpload": true,
+    "a2aPartMapping": true,
+    "artifactDerivation": true,
+    "artifactDerivationDefaultEnabled": false,
+    "pdfTextDeriver": true,
+    "tesseractOcrProvider": true,
+    "derivedTextTrust": "untrusted-data",
+    "derivedVisibilityFinalAuthorization": true
   },
   "limits": {
     "httpJsonBytes": 1048576,
     "noteBodyUtf8Bytes": 262144,
     "titleCodePoints": 256,
     "searchLimit": 100,
-    "wakeupTransportBytes": 65536
+    "wakeupTransportBytes": 65536,
+    "artifactBytesDefault": 67108864,
+    "inlineRawPartBytes": 262144
   },
   "cli": {
-    "manifestRevision": 4,
-    "implemented": ["init", "serve", "task-create", "task-get", "task-list", "task-cancel", "event-add", "artifact-put", "artifact-get", "agent-register", "agent-list", "memory-note-create", "memory-note-read", "memory-reindex", "memory-search", "memory-search-reindex", "memory-inbox-fetch", "memory-inbox-ack", "memory-wakeup", "memory-timeline", "memory-graph", "memory-stats", "memory-mcp", "skill-path", "skill-validate", "skill-install-codex", "skill-uninstall-codex"],
+    "manifestRevision": 5,
+    "implemented": ["init", "serve", "task-create", "task-get", "task-list", "task-cancel", "event-add", "artifact-put", "artifact-get", "artifact-derive", "artifact-derivation-status", "artifact-derivation-purge", "agent-register", "agent-list", "memory-note-create", "memory-note-read", "memory-reindex", "memory-search", "memory-search-reindex", "memory-inbox-fetch", "memory-inbox-ack", "memory-wakeup", "memory-timeline", "memory-graph", "memory-stats", "memory-mcp", "skill-path", "skill-validate", "skill-install-codex", "skill-uninstall-codex"],
     "planned": []
   }
 }

@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>A2A Superhub — coordination + shared memory for AI agent fleets</title>
-<meta name="description" content="A durable, local-first coordination hub for heterogeneous AI agents — with a shared memory plane where collaboration history becomes knowledge any agent can query. Even the ones that were offline.">
+<meta name="description" content="A durable, local-first coordination hub for heterogeneous AI agents — with shared memory, resumable artifacts, and optional searchable PDF/OCR text.">
 <meta property="og:title" content="A2A Superhub — your agents collaborate. Now they remember.">
-<meta property="og:description" content="Durable A2A coordination plus opt-in Markdown memory, hybrid retrieval, and a stateless MCP agent sidecar.">
+<meta property="og:description" content="Durable A2A coordination plus opt-in Markdown memory, hybrid retrieval, MCP, and checksum-linked PDF/OCR text.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://phenomenoner.github.io/a2a-superhub/">
 <meta name="theme-color" content="#07090e">
@@ -293,9 +293,9 @@ $ curl -s -H <span class="s">"Authorization: Bearer $AGENT_BETA_TOKEN"</span> \
       <div class="card rv"><span class="ico">TASKS</span><h3>Durable task lifecycle</h3>
         <p>Create, progress, cancel, terminal states — with idempotency keys, so retries
         return the same task instead of duplicates.</p></div>
-      <div class="card rv"><span class="ico">ARTIFACTS</span><h3>Content-addressed store</h3>
-        <p>SHA-256 verified blobs with manifests. Big payloads become references,
-        not inline JSON bloat.</p></div>
+      <div class="card rv"><span class="ico">ARTIFACTS</span><h3>Resumable, searchable artifacts</h3>
+        <p>SHA-256 verified raw/chunk uploads. Optional PDF/OCR text stays linked
+        to its source and is re-authorized against the current manifest.</p></div>
       <div class="card rv"><span class="ico">REGISTRY</span><h3>Agent Cards</h3>
         <p>Register and discover peers with standard A2A Agent Cards, served at
         <code>/.well-known/agent-card.json</code>.</p></div>
@@ -466,16 +466,17 @@ Tokens were not restored after the controlled restart.</pre>
       <div class="ms warm rv"><span class="m">implemented · opt-in</span><h4>MCP agent integration</h4>
         <p>Ten stable memory/task tools, authorized <code>memory://</code> resources,
         subscription notifications, and polling fallback.</p></div>
-      <div class="ms warm rv"><span class="m">planned</span><h4>Multimodal derivation</h4>
-        <p>OCR / caption / transcript → searchable text, linked back to artifacts.</p></div>
+      <div class="ms warm rv"><span class="m">implemented · opt-in</span><h4>Artifact text derivation</h4>
+        <p>Bounded PDF text and optional Tesseract OCR become untrusted searchable notes,
+        with source backlinks and current-ACL enforcement.</p></div>
       <div class="ms warm rv"><span class="m">planned</span><h4>Operational hardening</h4>
         <p>Retention, GC, backup/restore runbooks, workload sizing, and soak evidence.</p></div>
       <div class="ms warm rv"><span class="m">planned</span><h4>Hub federation</h4>
         <p>Hub-to-hub memory push/query with origin provenance.</p></div>
     </div>
     <p class="tbl-note" style="margin-top:1.2rem">A parallel coordination track covers
-    coordination plane: SSE streaming, A2A Part-model payloads, chunked artifact upload,
-    push notifications, capability negotiation.</p>
+    coordination plane: Part-model validation and chunked artifact upload are implemented;
+    SSE streaming, the complete A2A 1.0 binding, and push notifications remain ahead.</p>
   </div>
 </section>
 
@@ -483,7 +484,7 @@ Tokens were not restored after the controlled restart.</pre>
   <div class="wrap">
     <span class="kicker">implemented surface + future RFC</span>
     <h2>Shared memory now speaks MCP. Tear the remaining design apart.</h2>
-    <p class="lead">The v1 hub is shipped; memory, hybrid retrieval, and MCP are opt-in with
+    <p class="lead">The v1 hub is shipped; memory, hybrid retrieval, MCP, and artifact text derivation are opt-in with
     official-SDK, cross-transport, end-to-end, and restart/replay evidence.
     A2A 1.0 remains open RFC scope — the most useful contribution is criticism that starts with
     <em>"this breaks when…"</em></p>

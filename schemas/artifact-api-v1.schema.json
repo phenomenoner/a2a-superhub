@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://phenomenoner.github.io/a2a-superhub/schemas/artifact-api-v1.schema.json",
+  "title": "A2A Superhub artifact transport and derivation contract",
+  "type": "object",
+  "required": ["contract", "manifestSchema", "transports", "derivation"],
+  "additionalProperties": false,
+  "properties": {
+    "contract": {"const": "a2a-superhub.artifacts.v1"},
+    "manifestSchema": {"const": "a2a-superhub.artifact.v1"},
+    "transports": {
+      "type": "array",
+      "prefixItems": [
+        {"const": "base64-json"},
+        {"const": "raw-binary"},
+        {"const": "resumable-chunks"}
+      ],
+      "items": false
+    },
+    "manifest": {"$ref": "#/$defs/manifest"},
+    "derivation": {
+      "type": "object",
+      "required": ["defaultEnabled", "trust", "providers", "statusValues"],
+      "additionalProperties": false,
+      "properties": {
+        "defaultEnabled": {"const": false},
+        "trust": {"const": "untrusted-data"},
+        "providers": {
+          "type": "array",
+          "items": {"enum": ["pdf-text", "tesseract-ocr"]},
+          "uniqueItems": true
+        },
+        "statusValues": {
+          "type": "array",
+          "items": {"enum": ["pending", "running", "completed", "failed", "canceled", "purged"]},
+          "uniqueItems": true
+        }
+      }
+    }
+  },
+  "$defs": {
+    "manifest": {
+      "type": "object",
+      "required": ["schema", "artifactId", "sha256", "sizeBytes", "mediaType", "filename", "storageUri", "createdBy", "createdAt", "visibility", "policy"],
+      "properties": {
+        "schema": {"const": "a2a-superhub.artifact.v1"},
+        "artifactId": {"type": "string", "pattern": "^art_[0-9a-f]{32}$"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "sizeBytes": {"type": "integer", "minimum": 0},
+        "mediaType": {"type": "string", "minLength": 1, "maxLength": 255},
+        "filename": {"type": "string", "minLength": 1, "maxLength": 255},
+        "storageUri": {"type": "string", "pattern": "^hub-cas://sha256/[0-9a-f]{64}$"},
+        "createdBy": {"type": "string", "minLength": 1},
+        "createdAt": {"type": "string", "format": "date-time"},
+        "updatedAt": {"type": "string", "format": "date-time"},
+        "visibility": {
+          "oneOf": [
+            {"enum": ["private", "shared"]},
+            {"type": "string", "pattern": "^direct:[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$"}
+          ]
+        },
+        "policyRevision": {"type": "integer", "minimum": 1},
+        "policy": {"type": "object"}
+      }
+    }
+  },
+  "contract": "a2a-superhub.artifacts.v1",
+  "manifestSchema": "a2a-superhub.artifact.v1",
+  "transports": ["base64-json", "raw-binary", "resumable-chunks"],
+  "derivation": {
+    "defaultEnabled": false,
+    "trust": "untrusted-data",
+    "providers": ["pdf-text", "tesseract-ocr"],
+    "statusValues": ["pending", "running", "completed", "failed", "canceled", "purged"]
+  }
+}

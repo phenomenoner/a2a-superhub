@@ -27,7 +27,7 @@ class Principal:
 
 
 ALL_LEGACY_SCOPES = frozenset(
-    {"task.read", "task.write", "artifact.read", "artifact.write", "memory.read", "memory.write", "memory.share", "memory.admin", "hub.admin"}
+    {"task.read", "task.write", "artifact.read", "artifact.write", "artifact.share", "artifact.admin", "memory.read", "memory.write", "memory.share", "memory.admin", "hub.admin"}
 )
 ALLOWED_PRINCIPAL_KINDS = {"agent", "human", "service", "operator"}
 ALLOWED_SCOPES = ALL_LEGACY_SCOPES

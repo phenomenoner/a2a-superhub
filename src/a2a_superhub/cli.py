@@ -11,6 +11,7 @@ from .artifacts import ArtifactStore
 from .server import run_server
 from .store import HubStore
 from .auth import Principal
+from .derivation import DerivationService
 from .memory import MemoryService
 from .skill_package import SkillInstallError, install_skill, skill_source_path, uninstall_skill, validate_skill
 
@@ -42,6 +43,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         task_log_intents=set(args.task_log_intent or []), principals=principals,
         search_mode=args.search_mode, search_url=args.search_url,
         search_cache_dir=args.search_cache_dir,
+        enable_derivers=args.enable_derivers, max_artifact_bytes=args.max_artifact_bytes,
     )
     return 0
 
@@ -117,6 +119,7 @@ def cmd_artifact_put(args: argparse.Namespace) -> int:
         filename=args.filename or Path(args.file).name,
         media_type=args.media_type,
         created_by=args.created_by,
+        visibility=args.visibility,
     )
     _print(manifest)
     return 0
@@ -148,8 +151,38 @@ def cmd_artifact_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_artifact_derive(args: argparse.Namespace) -> int:
+    artifacts = ArtifactStore(args.state)
+    memory = MemoryService(args.state, artifact_store=artifacts)
+    memory.init()
+    service = DerivationService(args.state, artifacts, memory)
+    service.init()
+    _print(service.derive(args.artifact_id, _cli_principal(args), retry=args.retry))
+    return 0
+
+
+def cmd_artifact_derivation_status(args: argparse.Namespace) -> int:
+    artifacts = ArtifactStore(args.state)
+    memory = MemoryService(args.state, artifact_store=artifacts)
+    memory.init()
+    service = DerivationService(args.state, artifacts, memory)
+    service.init()
+    _print(service.status(args.job_id))
+    return 0
+
+
+def cmd_artifact_derivation_purge(args: argparse.Namespace) -> int:
+    artifacts = ArtifactStore(args.state)
+    memory = MemoryService(args.state, artifact_store=artifacts)
+    memory.init()
+    service = DerivationService(args.state, artifacts, memory)
+    service.init()
+    _print(service.purge(args.job_id, _cli_principal(args)))
+    return 0
+
+
 def _cli_principal(args: argparse.Namespace) -> Principal:
-    return Principal("local.operator", "operator", "tok_cli", frozenset({"memory.read", "memory.write", "memory.share", "memory.admin"}))
+    return Principal("local.operator", "operator", "tok_cli", frozenset({"hub.admin"}))
 
 
 def cmd_memory_note_create(args: argparse.Namespace) -> int:
@@ -288,6 +321,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--search-mode", choices=["keyword", "local", "server"], default="keyword")
     p.add_argument("--search-url", help="Explicit Qdrant URL for server search mode")
     p.add_argument("--search-cache-dir", help="FastEmbed model cache directory")
+    p.add_argument("--enable-derivers", action="store_true", help="Enable optional PDF text and image OCR derivation; requires --enable-memory")
+    p.add_argument("--max-artifact-bytes", type=int, default=64 * 1024 * 1024, help="Maximum accepted raw or resumable artifact size")
     p.set_defaults(func=cmd_serve)
 
     p = sub.add_parser("health", help="Print hub health from local state")
@@ -337,6 +372,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--filename")
     p.add_argument("--media-type", default="application/octet-stream")
     p.add_argument("--created-by", default="unknown")
+    p.add_argument("--visibility", default="private", help="private, shared, or direct:<principal>")
     p.set_defaults(func=cmd_artifact_put)
     p = artifact.add_parser("get", help="Get artifact manifest or content")
     p.add_argument("artifact_id")
@@ -345,6 +381,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_artifact_get)
     p = artifact.add_parser("list", help="List artifacts")
     p.set_defaults(func=cmd_artifact_list)
+    p = artifact.add_parser("derive", help="Extract untrusted searchable text from a PDF or image artifact")
+    p.add_argument("artifact_id")
+    p.add_argument("--retry", action="store_true", help="Explicitly retry a failed or canceled derivation")
+    p.set_defaults(func=cmd_artifact_derive)
+    p = artifact.add_parser("derivation-status", help="Show durable artifact derivation status")
+    p.add_argument("job_id")
+    p.set_defaults(func=cmd_artifact_derivation_status)
+    p = artifact.add_parser("derivation-purge", help="Delete a derived note and rebuildable indexes without deleting its source artifact")
+    p.add_argument("job_id")
+    p.set_defaults(func=cmd_artifact_derivation_purge)
 
     memory = sub.add_parser("memory", help="Opt-in memory foundation commands").add_subparsers(dest="memory_command", required=True)
     note = memory.add_parser("note", help="Memory note commands").add_subparsers(dest="note_command", required=True)

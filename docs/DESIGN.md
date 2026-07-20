@@ -264,11 +264,11 @@ sequenceDiagram
 
 ## 8. Multimodal memory (optional derivers)
 
-Non-text content always enters the **artifact CAS** (v1 mechanism); notes
-reference it via `artifacts:`. An optional deriver pipeline (off by default)
-turns selected media types into indexable text — image→OCR/caption,
-audio→transcript, pdf→text — stored as `shared/derived/<artifactId>.derived.md`
-with a `derived_from` backlink, entering the same index. Searching "that
+Non-text content always enters the **artifact CAS**; notes reference it via
+checksum plus a source backlink. The implemented optional deriver pipeline (off
+by default) turns PDFs and images into indexable untrusted text through local
+PDF extraction and a Tesseract OCR provider. Caption and transcript providers
+remain design extensions. Derived notes enter the same index. Searching "that
 architecture diagram" hits the caption and follows the edge back to the image.
 The deriver interface is `derive(manifest, bytes) -> markdown`; implementations
 may use local models or remote APIs; the hub core bundles none.
@@ -376,10 +376,10 @@ concurrent connections.
 | **Hybrid retrieval** | 🧱 Foundation (opt-in) | Qdrant dense+sparse retrieval, recency boost, authorization filters, local/server modes, and keyword fallback; fixed-corpus quality and interruption/recovery scenarios pass. |
 | **MCP agent integration** | ✅ Implemented (opt-in) | Ten stable tools, authorized `memory://` resources, negotiated subscription/poll refresh, and HTTP↔MCP offline restart scenarios through the official SDK. |
 | **A2A 1.0 runtime binding** | 📐 Design RFC | A standards-compliant binding remains separate from the implemented legacy JSON-RPC facade. |
-| **Multimodal derivation** | 🗺 Planned | PDF text, OCR, captions, and transcripts become derived notes; search must resolve a derivation back to its source artifact. |
+| **Artifact text derivation** | ✅ Implemented (opt-in) | Bounded PDF text and optional Tesseract OCR become untrusted derived notes; current source ACL and checksum backlinks are enforced. Captioning and transcripts remain future providers. |
 | **Operational hardening** | 🗺 Planned | Retention, garbage collection, backup/restore runbooks, workload sizing, and long-running soak evidence. |
 | **Hub federation** | 🗺 Planned | Namespaced hub-to-hub memory exchange with explicit same-operator trust and isolation evidence. |
-| **Coordination hardening** | 🗺 Planned | SSE streaming, A2A Part-model payloads, chunked artifacts, push notifications, and capability negotiation. |
+| **Coordination hardening** | Mixed | A2A Part-model validation and restart-safe chunked artifacts are implemented; SSE streaming, the complete A2A 1.0 binding, push notifications, and broader negotiation remain planned. |
 
 The implemented durable-memory and offline-sharing foundation adds only PyYAML
 and watchdog; hybrid retrieval remains a separate opt-in dependency family and

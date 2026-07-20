@@ -42,9 +42,9 @@ fresh Python 3.12 venvs:
 | `derive` | install `.[derive]`; same contract | 4/4 pass |
 | `memory` | initial no-FastEmbed env; see supersession record below | **SUPERSEDED — not current evidence** |
 
-The extra matrix is also encoded as five independent CI jobs. `derive` validates
-an explicit deferred provider-dependency contract rather than pretending a multimodal
-deriver exists.
+The extra matrix is also encoded as five independent CI jobs. `derive` installs
+pinned PDF/image decoding dependencies and validates the optional reference
+providers; image OCR still reports unavailable unless a Tesseract executable is present.
 
 ### FastEmbed correction and supersession record
 

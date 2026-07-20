@@ -37,7 +37,7 @@ Superhub attacks all three with one small, local-first hub.
 | Plane | Status | What it gives you |
 |---|---|---|
 | **Coordination plane** | ✅ Shipped (v1) | Durable task lifecycle, progress events, content-addressed artifacts, Agent Card registry, idempotency, bearer auth, rate limits. Dependency-free Python + SQLite. |
-| **Memory plane** | ✅ MCP-integrated foundation (opt-in) + [future design](docs/DESIGN.md) | Implemented Markdown truth, durable ops queue, FTS5 fallback, FastEmbed/Qdrant hybrid retrieval, authorized timeline/graph, multi-consumer inbox, safe wakeup, task-log, a stateless 10-tool MCP stdio sidecar, reference adapter, and operator Skill. A2A 1.0, multimodal derivation, and operational readiness remain future work. |
+| **Memory plane** | ✅ MCP-integrated foundation (opt-in) + [future design](docs/DESIGN.md) | Implemented Markdown truth, durable ops queue, FTS5 fallback, FastEmbed/Qdrant hybrid retrieval, authorized timeline/graph, multi-consumer inbox, safe wakeup, task-log, a stateless 10-tool MCP stdio sidecar, reference adapter, operator Skill, and optional PDF/image text derivation with source-artifact authorization. A complete A2A 1.0 binding and operational readiness remain future work. |
 
 Agents remain peers, not children of a central framework. The hub owns
 cross-agent semantics; adapters own local runtime integration.
@@ -75,7 +75,11 @@ Shipped and tested; the coordination core remains dependency-free:
 
 - Standalone state root with SQLite task and event storage.
 - Task create / get / list / cancel / event operations with idempotency keys.
-- Content-addressed artifact store with SHA-256 verification.
+- Content-addressed artifact store with SHA-256 verification, raw binary and
+  restart-safe resumable uploads, private/shared/direct visibility, and bounded
+  PDF text plus optional Tesseract OCR derivation.
+- A2A 1.0 `Part` oneof mapping for `text`, `raw`, `url`, and `data`; the full
+  protocol binding remains distinct from the legacy JSON-RPC facade.
 - Agent Card registration and listing.
 - Minimal JSON-RPC A2A facade: `message/send`, `tasks/get`, `tasks/cancel`.
 - Optional bearer-token auth and per-client rate limiting.
@@ -110,6 +114,8 @@ curl -s http://127.0.0.1:8787/v1/tasks \
 Full API reference in [docs/API.md](docs/API.md). Adapter contract in
 [docs/ADAPTERS.md](docs/ADAPTERS.md). MCP setup and exact behavior are in
 [docs/MCP_AGENT_INTEGRATION.md](docs/MCP_AGENT_INTEGRATION.md).
+Artifact transport, derivation, trust labels, and rollback behavior are in
+[docs/ARTIFACTS_AND_DERIVATION.md](docs/ARTIFACTS_AND_DERIVATION.md).
 
 ### Connect an MCP client
 
@@ -163,6 +169,10 @@ operational-readiness claim. The short version:
   two `memory://` resources reuse the HTTP authorization boundary; a removable client adapter negotiates
   identity/capabilities, inserts only delimited untrusted data, and acks only
   after delivery. The packaged Skill provides doctor/smoke/install workflows.
+- **Searchable artifact text** — when explicitly enabled, bounded PDF extraction
+  and image OCR create a clearly labeled untrusted Markdown note. Every read and
+  search result is re-authorized against the current source artifact manifest;
+  cleanup removes the derived note/index without deleting the checksum-authoritative source.
 - **Burn-the-index guarantee** — the current FTS/KG SQLite index is derived.
   Delete it and rebuild the same visible note/edge set from Markdown. Delivery,
   ack, job, task, artifact, and auth state are separate authoritative backups.
@@ -181,8 +191,9 @@ Memory frameworks remember *users*. State layers share *the present*. Superhub
 gives a fleet of peer agents a durable, queryable, **shared past**.
 
 The implemented surface has repository end-to-end, restart/replay, official MCP
-SDK, and cross-transport evidence. It does not mean A2A 1.0 parity, production
-deployment, operational soak, or multimodal support.
+SDK, artifact transport/derivation, and cross-transport evidence. It does not
+mean complete A2A 1.0 parity, production deployment, operational soak, audio
+transcription, or image captioning.
 
 ## Roadmap
 
@@ -198,23 +209,27 @@ deployment, operational soak, or multimodal support.
   cross-transport scenarios, and Skill/product drift CI.
 - **A2A 1.0 runtime binding — 📐 Design RFC:** a standards-compliant binding
   remains separate from the legacy JSON-RPC coordination facade.
-- **Multimodal derivation — 🗺 Planned:** OCR, captions, and transcripts become
-  searchable derived notes.
+- **Artifact text derivation — ✅ Implemented (opt-in):** bounded PDF extraction,
+  optional Tesseract OCR, source backlinks, current-ACL enforcement, durable
+  idempotent jobs, explicit retry/cancel, and derived-note-only purge.
+- **Additional media providers — 🗺 Planned:** image captioning and audio/video
+  transcription remain provider work, not implied by OCR support.
 - **Operational hardening — 🗺 Planned:** retention, garbage collection,
   backup/restore runbooks, and workload-specific soak evidence.
 - **Hub federation — 🗺 Planned:** namespaced, explicitly trusted hub-to-hub
   memory exchange.
-- **Coordination hardening — 🗺 Planned:** SSE streaming, A2A Part-model
-  payloads, chunked artifact upload, and push notifications.
+- **Coordination hardening — mixed:** A2A Part-model validation and chunked
+  artifact upload are implemented; SSE streaming, the complete A2A 1.0 binding,
+  and push notifications remain planned.
 
 Details and acceptance criteria in the [RFC](docs/DESIGN.md).
 
 ## Status & contributing
 
 This project is **contract-first**: coordination plus opt-in durable memory,
-offline sharing, hybrid retrieval, and MCP agent integration are implemented and tested;
-the A2A 1.0, multimodal, operational, and federation surfaces remain
-incomplete. Read the [RFC](docs/DESIGN.md), the
+offline sharing, hybrid retrieval, MCP agent integration, and artifact text
+derivation are implemented and tested; the complete A2A 1.0, additional-media,
+operational, and federation surfaces remain incomplete. Read the [RFC](docs/DESIGN.md), the
 [contract and security decisions](docs/CONTRACT_AND_SECURITY_DECISIONS.md), and the machine schemas before
 opening an issue that starts with *"this breaks when…"*.
 
@@ -228,7 +243,7 @@ provenance on every write. See [docs/SECURITY.md](docs/SECURITY.md).
 ## Development
 
 ```bash
-python -m pip install -e ".[contracts]"
+python -m pip install -e ".[contracts,derive]"
 python -m unittest discover -s tests -v
 ```
 
@@ -241,8 +256,9 @@ The packaging contract also defines `memory-core`, `search`, `mcp`, `derive`,
 and the `memory` umbrella extra. `memory-core` enables durable memory only when
 the server flag is also present. `search` installs the selected FastEmbed
 multilingual MiniLM + BM25 Qdrant provider; use explicit local/server search flags.
-`mcp` installs the stateless stdio sidecar; `derive` is intentionally dependency-free until a deriver provider declares its
-own PDF/OCR/transcription stack. See [docs/PACKAGING.md](docs/PACKAGING.md).
+`mcp` installs the stateless stdio sidecar; `derive` installs pinned `pypdf` and
+Pillow dependencies. Image OCR additionally requires a separately installed
+Tesseract executable. See [docs/PACKAGING.md](docs/PACKAGING.md).
 
 ## License
 

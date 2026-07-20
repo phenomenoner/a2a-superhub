@@ -283,6 +283,7 @@ class MemoryService:
         task_log_intents: set[str] | frozenset[str] | None = None,
         hub_store: Any | None = None,
         search_provider: Any | None = None,
+        artifact_store: Any | None = None,
     ):
         self.state_dir = Path(state_dir)
         self.root = self.state_dir / "memory"
@@ -297,6 +298,7 @@ class MemoryService:
         self.task_log_intents = frozenset(task_log_intents or set())
         self.hub_store = hub_store
         self.search_provider = search_provider
+        self.artifact_store = artifact_store
         self._initialized = False
         self._authoritative_catalog: dict[str, Path] = {}
 
@@ -446,14 +448,29 @@ class MemoryService:
                 if name not in columns:
                     conn.execute(f"ALTER TABLE notes ADD COLUMN {name} {definition}")
 
-    @staticmethod
-    def _can_read(principal: Principal, note: dict[str, Any]) -> bool:
+    def _can_read(self, principal: Principal, note: dict[str, Any]) -> bool:
         if not principal.has("memory.read"):
             return False
-        if principal.has("memory.admin") or note["author"] == principal.subject:
-            return True
-        visibility = note["visibility"]
-        return visibility == "shared" or visibility == f"direct:{principal.subject}"
+        if not (principal.has("memory.admin") or note["author"] == principal.subject):
+            visibility = note["visibility"]
+            if visibility != "shared" and visibility != f"direct:{principal.subject}":
+                return False
+        derived_sources = [
+            item.get("target", "")[len("artifact:"):]
+            for item in note.get("relations") or []
+            if item.get("type") == "x-derived-from" and item.get("target", "").startswith("artifact:")
+        ]
+        if derived_sources:
+            if self.artifact_store is None:
+                return False
+            for artifact_id in derived_sources:
+                try:
+                    manifest = self.artifact_store.get_manifest(artifact_id)
+                    if not manifest or not self.artifact_store.can_read(manifest, principal):
+                        return False
+                except Exception:
+                    return False
+        return True
 
     @staticmethod
     def _authorize_create(principal: Principal, visibility: str) -> None:
@@ -1164,6 +1181,28 @@ class MemoryService:
         if not self._can_read(principal, note):
             raise KeyError(f"note not found: {note_id}")
         return note
+
+    def remove_derived_note(self, note_id: str, principal: Principal) -> None:
+        """Remove only a deriver-produced note and its rebuildable indexes."""
+        if not (principal.has("memory.admin") or principal.has("hub.admin")):
+            raise AuthorizationError("memory.admin scope required")
+        note, path = self._read_authoritative_with_path(note_id)
+        if not any(
+            item.get("type") == "x-derived-from" and item.get("target", "").startswith("artifact:")
+            for item in note.get("relations") or []
+        ):
+            raise AuthorizationError("only derived notes can be removed through this operation")
+        path.unlink()
+        self._authoritative_catalog.pop(note_id.casefold(), None)
+        self._remove_index_ids({note_id.casefold()})
+        with self._connect(self.ops_path) as conn:
+            conn.execute("DELETE FROM jobs WHERE note_id=?", (note_id,))
+            conn.execute("DELETE FROM idempotency WHERE note_id=?", (note_id,))
+        if self.search_provider is not None:
+            try:
+                self.search_provider.delete(note_id)
+            except Exception:
+                pass
 
     def recover_jobs(self) -> int:
         valid, collided_ids = self._scan_notes()

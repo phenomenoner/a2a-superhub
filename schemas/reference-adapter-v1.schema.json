@@ -17,7 +17,7 @@
     "capabilities": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema", "memoryFoundation", "memorySharing", "timelineGraph", "safeWakeup", "taskLog", "watcherSideEffects", "runtimeWatcher", "adapter", "memoryFull", "memorySearch", "retrieval", "principal"],
+      "required": ["schema", "memoryFoundation", "memorySharing", "timelineGraph", "safeWakeup", "taskLog", "watcherSideEffects", "runtimeWatcher", "adapter", "memoryFull", "memorySearch", "artifactUploads", "a2aPartMapping", "maxArtifactBytes", "artifactDerivation", "derivedTextTrust", "retrieval", "principal"],
       "properties": {
         "schema": {"const": "a2a-superhub.capabilities.v1"},
         "memoryFoundation": {"type": "boolean"},
@@ -30,6 +30,19 @@
         "adapter": {"type": "boolean"},
         "memoryFull": {"const": false},
         "memorySearch": {"enum": ["keyword", "hybrid"]},
+        "artifactUploads": {
+          "type": "array",
+          "prefixItems": [{"const": "base64-json"}, {"const": "raw-binary"}, {"const": "resumable-chunks"}],
+          "items": false
+        },
+        "a2aPartMapping": {
+          "type": "array",
+          "prefixItems": [{"const": "text"}, {"const": "raw"}, {"const": "url"}, {"const": "data"}],
+          "items": false
+        },
+        "maxArtifactBytes": {"type": "integer", "minimum": 1},
+        "artifactDerivation": {"type": "boolean"},
+        "derivedTextTrust": {"const": "untrusted-data"},
         "retrieval": {
           "type": "object",
           "required": ["provider"],

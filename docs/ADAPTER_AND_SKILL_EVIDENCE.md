@@ -155,7 +155,7 @@ Windows benchmark attempts that timed out, orphaned a child, overlapped another
 run, or predated the final receipt-path change were discarded. Only the
 uncontended final-code results in `docs/PERFORMANCE_BASELINE.md` are claimed.
 
-## Exit checklist and open boundaries
+## Verified outcomes and open boundaries
 
 - Fresh installed agent workflow completes doctor → wakeup → inbox → handoff in
   under 30 minutes: **evidenced**.

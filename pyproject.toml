@@ -33,15 +33,17 @@ search = [
 mcp = [
   "mcp==1.28.1",
 ]
-# Deriver implementations own their media-specific dependencies. Keeping this
-# extra intentionally empty reserves the stable install name without selecting
-# a PDF/OCR/transcription stack before multimodal derivation's provider contract is ratified.
-derive = []
+derive = [
+  "pypdf==6.6.1",
+  "Pillow==12.2.0",
+]
 memory = [
   "PyYAML==6.0.3",
   "watchdog==6.0.0",
   "qdrant-client[fastembed]==1.18.0",
   "mcp==1.28.1",
+  "pypdf==6.6.1",
+  "Pillow==12.2.0",
 ]
 contracts = [
   "a2a-sdk==1.1.1",

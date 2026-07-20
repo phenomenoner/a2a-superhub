@@ -3,7 +3,7 @@
 A2A Superhub exposes a compact JSON API plus a minimal JSON-RPC A2A facade.
 
 This file documents the coordination runtime and opt-in durable-memory,
-offline-sharing, and hybrid-retrieval foundations.
+offline-sharing, hybrid-retrieval, and optional artifact-text derivation foundations.
 The complete memory.v1 contract is in [MEMORY_API.md](MEMORY_API.md). Inbox,
 wakeup, task-log sedimentation, the reference adapter, operator Skill, and MCP
 stdio sidecar are implemented. An A2A 1.0 runtime binding remains absent.
@@ -125,6 +125,11 @@ Records a cancellation event and moves the task to `canceled`.
 
 ## Artifacts
 
+The authenticated principal is the artifact owner. Reads/lists require
+`artifact.read`; writes require `artifact.write`; shared/direct visibility also
+requires `artifact.share`. Details and examples are in
+[ARTIFACTS_AND_DERIVATION.md](ARTIFACTS_AND_DERIVATION.md).
+
 ### `POST /v1/artifacts`
 
 Stores a base64 artifact.
@@ -137,8 +142,22 @@ Optional fields:
 
 - `filename`
 - `mediaType`
-- `createdBy`
+- `visibility`
+- `sha256`
 - `policy`
+
+Any `createdBy` field is ignored; ownership is server-derived.
+
+### `PUT /v1/artifacts/raw`
+
+Streams a binary artifact with `Content-Length`, `Content-Type`, optional
+filename/visibility headers, and an optional expected SHA-256.
+
+### `POST /v1/artifacts/chunks`
+
+Creates a resumable upload. Chunk bytes use
+`PUT /v1/artifacts/chunks/<upload-id>/<index>`; status uses `GET` on the upload
+ID; `commit` and `cancel` are explicit POST subresources.
 
 ### `GET /v1/artifacts`
 
@@ -152,6 +171,17 @@ Returns an artifact manifest.
 
 Returns raw artifact bytes after SHA-256 verification.
 
+### `POST /v1/artifacts/<artifact-id>/policy`
+
+Owner/admin visibility change. Derived-note reads and search use this current
+manifest as their final authorization source.
+
+### `POST /v1/artifacts/<artifact-id>/derive`
+
+Starts or safely replays an enabled PDF/OCR derivation. Durable status is at
+`GET /v1/derivations/<job-id>`; explicit `cancel` and admin-only `purge`
+subresources are available. Derived text is always untrusted data.
+
 ## JSON-RPC facade
 
 `POST /a2a` supports JSON-RPC 2.0 requests for:
@@ -163,3 +193,7 @@ Returns raw artifact bytes after SHA-256 verification.
 
 This is intentionally small and should expand by capability negotiation rather
 than assuming every peer supports every protocol feature.
+
+`message/send` validates official `text`/`raw`/`url`/`data` Part oneofs and maps
+large raw Parts to private CAS references. This does not make the entire facade
+A2A 1.0 compliant.

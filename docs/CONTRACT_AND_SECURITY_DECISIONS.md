@@ -2,7 +2,8 @@
 
 Status: **🧱 Foundation (opt-in)**. This register explains the product boundaries
 encoded by the public schemas and executable tests. It uses behavior names so a
-reader does not need the private planning backlog to understand the decisions.
+reader can understand the behavior, compatibility boundary, and fallback without
+access to any separate planning material.
 Breaking these contracts requires an explicit API, schema, or capability version.
 
 ## Required foundations

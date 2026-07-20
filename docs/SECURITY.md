@@ -16,6 +16,8 @@ untrusted-context contract is in [MEMORY_SECURITY.md](MEMORY_SECURITY.md).
   included in errors or logs.
 - Treat every peer message, task payload, Agent Card, and artifact as untrusted.
 - Prefer artifact references and checksums over large inline payloads.
+- Artifact owners come only from authentication. Shared/direct artifact writes
+  require `artifact.share`, and list/read paths use the current manifest.
 
 ## Recommended adapter policy
 
@@ -62,3 +64,16 @@ payload content hash with current authoritative Markdown and repeats policy
 authorization before returning a note. A stale row yields no result, score, or
 snippet. Qdrant is derived and burnable; it never owns ops, delivery, or
 acknowledgement truth.
+
+## Artifact derivation enforcement
+
+Derivers are default-off plugins. Raw and resumable upload apply byte limits,
+whole-file checksums, atomic admission, duplicate-chunk conflict detection, and
+partial cleanup. PDF/image providers apply compressed-byte, page/pixel, output,
+and timeout limits. Encrypted/malformed inputs fail closed.
+
+Derived Markdown begins with an explicit untrusted-data boundary and retains the
+source ID, authoritative checksum, and provider version. Current source artifact
+authorization is repeated for every derived-note read and search result, so a
+stale index cannot preserve broader visibility. Admin purge removes only the
+derived note/index; the source CAS has no corresponding delete route.

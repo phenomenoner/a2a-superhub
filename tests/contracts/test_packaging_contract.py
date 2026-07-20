@@ -40,7 +40,7 @@ class PackagingContractTests(unittest.TestCase):
                     union.append(dependency)
         self.assertEqual(contract_extras["memory"]["dependencies"], union)
 
-    def test_search_pins_evaluated_embedding_models_and_derive_remains_deferred(self) -> None:
+    def test_search_and_reference_deriver_dependencies_are_pinned(self) -> None:
         search = self.contract["extras"]["search"]
         self.assertTrue(search["runtimeImplemented"])
         self.assertEqual("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2", search["embeddingModel"])
@@ -49,9 +49,9 @@ class PackagingContractTests(unittest.TestCase):
         self.assertEqual("apache-2.0", search["embeddingLicense"])
         self.assertEqual(["qdrant-client[fastembed]==1.18.0"], search["dependencies"])
         derive = self.contract["extras"]["derive"]
-        self.assertEqual([], derive["dependencies"])
-        self.assertFalse(derive["runtimeImplemented"])
-        self.assertIn("provider", derive["deferredDependencyContract"].casefold())
+        self.assertEqual(["pypdf==6.6.1", "Pillow==12.2.0"], derive["dependencies"])
+        self.assertTrue(derive["runtimeImplemented"])
+        self.assertIn("tesseract", derive["externalProvider"].casefold())
 
     def test_mcp_extra_has_a_real_runtime_entry_point(self) -> None:
         mcp = self.contract["extras"]["mcp"]
@@ -68,8 +68,8 @@ class PackagingContractTests(unittest.TestCase):
             "memory-core": ("yaml", "watchdog"),
             "search": ("qdrant_client", "fastembed"),
             "mcp": ("mcp",),
-            "derive": (),
-            "memory": ("yaml", "watchdog", "qdrant_client", "fastembed", "mcp"),
+            "derive": ("pypdf", "PIL"),
+            "memory": ("yaml", "watchdog", "qdrant_client", "fastembed", "mcp", "pypdf", "PIL"),
         }
         self.assertIn(selected, imports)
         for module in imports[selected]:

@@ -104,6 +104,30 @@ class JsonSchemaContractTests(unittest.TestCase):
         fixture = load_json(FIXTURES / "evidence" / "example.json")
         self.assertEqual([], list(validator.iter_errors(fixture)))
 
+    def test_artifact_transport_and_derivation_contract(self) -> None:
+        schema = load_json(ROOT / "schemas" / "artifact-api-v1.schema.json")
+        Draft202012Validator.check_schema(schema)
+        instance = {
+            "contract": schema["contract"],
+            "manifestSchema": schema["manifestSchema"],
+            "transports": schema["transports"],
+            "derivation": schema["derivation"],
+            "manifest": {
+                "schema": "a2a-superhub.artifact.v1",
+                "artifactId": "art_" + "a" * 32,
+                "sha256": "a" * 64,
+                "sizeBytes": 3,
+                "mediaType": "text/plain",
+                "filename": "a.txt",
+                "storageUri": "hub-cas://sha256/" + "a" * 64,
+                "createdBy": "agent.alpha",
+                "createdAt": "2026-07-20T00:00:00Z",
+                "visibility": "private",
+                "policy": {},
+            },
+        }
+        self.assertEqual([], list(Draft202012Validator(schema, format_checker=FormatChecker()).iter_errors(instance)))
+
 
 if __name__ == "__main__":
     unittest.main()

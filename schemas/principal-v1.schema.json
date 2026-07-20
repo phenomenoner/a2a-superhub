@@ -20,7 +20,7 @@
       "uniqueItems": true,
       "items": {
         "enum": [
-          "task.read", "task.write", "artifact.read", "artifact.write",
+          "task.read", "task.write", "artifact.read", "artifact.write", "artifact.share", "artifact.admin",
           "memory.read", "memory.write", "memory.share", "memory.admin", "hub.admin"
         ]
       }

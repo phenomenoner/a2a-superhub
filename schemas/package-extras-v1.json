@@ -26,16 +26,16 @@
       "runtimeImplemented": true
     },
     "derive": {
-      "dependencies": [],
-      "purpose": "Stable install name for provider-owned deriver plugins.",
-      "runtimeImplemented": false,
-      "deferredDependencyContract": "Each future PDF, OCR, or transcription provider declares and tests its own media-specific dependency set; the current product selects none."
+      "dependencies": ["pypdf==6.6.1", "Pillow==12.2.0"],
+      "purpose": "Bounded PDF text extraction and image validation for the optional Tesseract OCR provider.",
+      "runtimeImplemented": true,
+      "externalProvider": "Image OCR invokes a separately installed Tesseract executable with a timeout; PDF extraction is local and dependency-contained."
     },
     "memory": {
-      "dependencies": ["PyYAML==6.0.3", "watchdog==6.0.0", "qdrant-client[fastembed]==1.18.0", "mcp==1.28.1"],
+      "dependencies": ["PyYAML==6.0.3", "watchdog==6.0.0", "qdrant-client[fastembed]==1.18.0", "mcp==1.28.1", "pypdf==6.6.1", "Pillow==12.2.0"],
       "includes": ["memory-core", "search", "mcp", "derive"],
       "purpose": "Umbrella installation seam for all currently declared optional dependency families.",
-      "runtimeImplemented": false
+      "runtimeImplemented": true
     }
   }
 }

@@ -8,7 +8,7 @@ description: Operate and diagnose the A2A Superhub product across its CLI, HTTP,
 ## Preflight
 
 1. Resolve the exact target. Default only to an explicit loopback target; never guess a remote URL.
-2. Read health, readiness, version, Agent Card, and structured capabilities through surfaces the server actually advertises.
+2. Read health, readiness, version, Agent Card, structured capabilities, artifact size limit, and derivation state through surfaces the server actually advertises.
 3. Compare the server surface with [references/compatibility.json](references/compatibility.json). Treat `implemented: false` and absent capabilities as unavailable.
 4. Resolve the authenticated subject and scopes without printing or copying token material.
 5. Report degraded reasons and source/index revisions before choosing a workflow.
@@ -68,7 +68,10 @@ block, then acknowledge. Session-end handoff requires explicit write authority
 and real task/event/artifact provenance links.
 
 The packaged MCP sidecar exposes ten stable memory/task tools and two authorized
-resource templates. A2A 1.0, destructive repair, release, and deployment remain unavailable.
+resource templates. HTTP supports official A2A `Part` oneof validation plus raw,
+URL, data, and text mapping, but the complete A2A 1.0 JSON-RPC binding remains
+separately unavailable. Destructive repair, release, and deployment remain unavailable.
+Artifact derivation is HTTP/CLI only and must be explicitly enabled with memory.
 Hybrid retrieval is available only when `memorySearch: hybrid` and retrieval
 capabilities are advertised; otherwise request `mode=keyword` or accept the
 reported automatic keyword fallback. On a legacy Agent Card without current granular

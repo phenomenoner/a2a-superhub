@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import ipaddress
 import json
 import stat
@@ -12,9 +11,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from .artifacts import ArtifactStore
+from .artifacts import ArtifactAccessError, ArtifactConflictError, ArtifactError, ArtifactStore, ArtifactTooLargeError
 from .auth import BearerAuth, FixedWindowLimiter, Principal
+from .derivation import DerivationError, DerivationService
 from .memory import AuthorizationError, ConflictError, CursorError, MemoryError as HubMemoryError, MemoryService, MemoryWatcher, RequestTooLargeError
+from .parts import normalize_a2a_parts, public_part
 from .store import HubStore
 
 HUB_AGENT_CARD = {
@@ -83,6 +84,8 @@ def make_server(
     search_mode: str = "keyword",
     search_url: str | None = None,
     search_cache_dir: str | Path | None = None,
+    enable_derivers: bool = False,
+    max_artifact_bytes: int = 64 * 1024 * 1024,
 ) -> ThreadingHTTPServer:
     try:
         is_loopback = ipaddress.ip_address(host).is_loopback
@@ -91,7 +94,9 @@ def make_server(
     if not is_loopback and not token and not principals:
         raise ValueError("non-loopback binding requires bearer authentication")
     store = HubStore(state_dir)
-    artifacts = ArtifactStore(state_dir)
+    if enable_derivers and not enable_memory:
+        raise ValueError("artifact derivation requires --enable-memory")
+    artifacts = ArtifactStore(state_dir, max_artifact_bytes=max_artifact_bytes)
     store.init()
     artifacts.init()
     auth = BearerAuth(token, principals)
@@ -112,9 +117,13 @@ def make_server(
         task_log_intents=task_log_intents,
         hub_store=store,
         search_provider=search_provider,
+        artifact_store=artifacts,
     ) if enable_memory else None
     if memory:
         memory.init()
+    derivations = DerivationService(state_dir, artifacts, memory) if enable_derivers and memory else None
+    if derivations:
+        derivations.init()
     runtime_watcher_enabled = False
 
     class Handler(BaseHTTPRequestHandler):
@@ -157,6 +166,15 @@ def make_server(
                 raise ValueError("request body must be a JSON object")
             return obj
 
+        def _read_binary_chunks(self, length: int):
+            remaining = length
+            while remaining:
+                chunk = self.rfile.read(min(remaining, 65_536))
+                if not chunk:
+                    raise ArtifactConflictError("request body ended before Content-Length")
+                remaining -= len(chunk)
+                yield chunk
+
         def _json(self, obj: Any, *, status: HTTPStatus = HTTPStatus.OK) -> None:
             data = json.dumps(obj, ensure_ascii=False, indent=2).encode("utf-8")
             self.send_response(int(status))
@@ -170,6 +188,46 @@ def make_server(
                 {"error": {"code": code, "message": message, "retryable": retryable}, "traceId": f"trace_{uuid.uuid4().hex}"},
                 status=status,
             )
+
+        def _task_request(self, value: dict[str, Any]) -> dict[str, Any]:
+            if not self._principal.has("task.write"):
+                raise AuthorizationError("task.write scope required")
+            request = dict(value)
+            request["fromAgent"] = self._principal.subject
+            message = request.get("message")
+            if isinstance(message, dict) and "parts" in message:
+                normalized = normalize_a2a_parts(
+                    message["parts"], allow_legacy=bool(request.pop("allowLegacyPartKind", False)),
+                )
+                public_parts: list[dict[str, Any]] = []
+                artifact_refs = list(request.get("artifactRefs") or [])
+                for part in normalized:
+                    if part["type"] == "raw" and len(part["bytes"]) > 256 * 1024:
+                        if not self._principal.has("artifact.write"):
+                            raise ArtifactAccessError("artifact.write scope is required for large raw Parts")
+                        manifest = artifacts.put_bytes(
+                            part["bytes"], filename=part.get("filename"),
+                            media_type=part.get("mediaType") or "application/octet-stream",
+                            created_by=self._principal.subject, visibility="private",
+                        )
+                        artifact_refs.append(manifest["artifactId"])
+                        public_parts.append({
+                            "url": manifest["storageUri"],
+                            "filename": manifest["filename"],
+                            "mediaType": manifest["mediaType"],
+                        })
+                    else:
+                        public_parts.append(public_part(part))
+                request["payload"] = {
+                    "messageId": message.get("messageId"),
+                    "role": message.get("role"),
+                    "parts": public_parts,
+                    "extensions": message.get("extensions") or [],
+                }
+                request["artifactRefs"] = artifact_refs
+                request["idempotencyKey"] = request.get("idempotencyKey") or message.get("messageId")
+                request["toAgent"] = request.get("toAgent") or "a2a-superhub"
+            return request
 
         def _bytes(self, data: bytes, *, media_type: str = "application/octet-stream") -> None:
             self.send_response(HTTPStatus.OK)
@@ -188,6 +246,10 @@ def make_server(
                 if path == "/.well-known/agent-card.json":
                     card = json.loads(json.dumps(HUB_AGENT_CARD))
                     card["capabilities"]["memoryFoundation"] = bool(memory)
+                    card["capabilities"]["artifactDerivation"] = bool(derivations)
+                    card["capabilities"]["artifactUploads"] = ["base64-json", "raw-binary", "resumable-chunks"]
+                    card["capabilities"]["a2aPartMapping"] = ["text", "raw", "url", "data"]
+                    card["capabilities"]["maxArtifactBytes"] = artifacts.max_artifact_bytes
                     self._json(card)
                     return
                 if not self._check_auth():
@@ -208,6 +270,11 @@ def make_server(
                         "adapter": bool(memory and memory.enable_delivery),
                         "memoryFull": False,
                         "memorySearch": "hybrid" if search_provider else "keyword",
+                        "artifactUploads": ["base64-json", "raw-binary", "resumable-chunks"],
+                        "a2aPartMapping": ["text", "raw", "url", "data"],
+                        "maxArtifactBytes": artifacts.max_artifact_bytes,
+                        "artifactDerivation": bool(derivations),
+                        "derivedTextTrust": "untrusted-data",
                         "retrieval": memory.search_status() if memory else {"provider": "keyword"},
                         "principal": {
                             "subject": self._principal.subject,
@@ -288,11 +355,15 @@ def make_server(
                     self._json({"items": memory.list_receipts(trace_id=query.get("traceId", [None])[0])})
                     return
                 if path == "/v1/tasks":
+                    if not self._principal.has("task.read"):
+                        raise AuthorizationError("task.read scope required")
                     query = parse_qs(parsed.query)
                     limit = int(query.get("limit", ["50"])[0])
                     self._json({"tasks": store.list_tasks(limit=limit)})
                     return
                 if path.startswith("/v1/tasks/"):
+                    if not self._principal.has("task.read"):
+                        raise AuthorizationError("task.read scope required")
                     parts = path.split("/")
                     task_id = parts[3]
                     if len(parts) == 5 and parts[4] == "events":
@@ -305,15 +376,22 @@ def make_server(
                     self._json(task)
                     return
                 if path == "/v1/artifacts":
-                    self._json({"artifacts": artifacts.list_manifests()})
+                    if not self._principal.has("artifact.read"):
+                        raise ArtifactAccessError("artifact.read scope required")
+                    self._json({"artifacts": artifacts.list_manifests(self._principal)})
                     return
+                if path.startswith("/v1/artifacts/chunks/"):
+                    parts = path.split("/")
+                    if len(parts) == 5:
+                        session = artifacts.get_upload(parts[4])
+                        if session["createdBy"] != self._principal.subject and not self._principal.has("hub.admin"):
+                            raise KeyError("upload not found")
+                        self._json(session)
+                        return
                 if path.startswith("/v1/artifacts/"):
                     parts = path.split("/")
                     artifact_id = parts[3]
-                    manifest = artifacts.get_manifest(artifact_id)
-                    if not manifest:
-                        self._json({"error": "artifact not found"}, status=HTTPStatus.NOT_FOUND)
-                        return
+                    manifest = artifacts.require_read(artifact_id, self._principal)
                     if len(parts) == 5 and parts[4] == "content":
                         data = artifacts.get_bytes(artifact_id)
                         if data is None:
@@ -323,15 +401,25 @@ def make_server(
                         return
                     self._json(manifest)
                     return
+                if derivations and path.startswith("/v1/derivations/"):
+                    job_id = path.split("/")[3]
+                    status = derivations.status(job_id)
+                    artifacts.require_read(status["artifactId"], self._principal)
+                    self._json(status)
+                    return
                 self._json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
             except KeyError:
                 self._api_error("NOT_FOUND", "resource not found", HTTPStatus.NOT_FOUND)
-            except AuthorizationError:
-                self._api_error("SCOPE_DENIED", "memory.read is required", HTTPStatus.FORBIDDEN)
+            except (AuthorizationError, ArtifactAccessError) as exc:
+                self._api_error("SCOPE_DENIED", str(exc), HTTPStatus.FORBIDDEN)
             except CursorError as exc:
                 self._api_error("CURSOR_INVALID", str(exc), HTTPStatus.BAD_REQUEST)
             except HubMemoryError as exc:
                 self._api_error("INVALID_REQUEST", str(exc), HTTPStatus.BAD_REQUEST)
+            except ArtifactConflictError as exc:
+                self._api_error("ARTIFACT_CONFLICT", str(exc), HTTPStatus.CONFLICT)
+            except ArtifactError as exc:
+                self._api_error("INVALID_ARTIFACT", str(exc), HTTPStatus.BAD_REQUEST)
             except Exception as exc:
                 self._json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
 
@@ -386,10 +474,14 @@ def make_server(
                     self._json(memory.replay_terminal_outbox(store))
                     return
                 if path == "/v1/tasks":
-                    task, inserted = store.create_task(body)
+                    if not self._principal.has("task.write"):
+                        raise AuthorizationError("task.write scope required")
+                    task, inserted = store.create_task(self._task_request(body))
                     self._json({"inserted": inserted, "task": task}, status=HTTPStatus.CREATED if inserted else HTTPStatus.OK)
                     return
                 if path.startswith("/v1/tasks/"):
+                    if not self._principal.has("task.write"):
+                        raise AuthorizationError("task.write scope required")
                     parts = path.split("/")
                     task_id = parts[3]
                     if len(parts) == 5 and parts[4] == "events":
@@ -401,22 +493,77 @@ def make_server(
                         self._json({"event": event, "task": store.get_task(task_id)})
                         return
                 if path == "/v1/artifacts":
+                    if not self._principal.has("artifact.write"):
+                        raise ArtifactAccessError("artifact.write scope required")
                     content = body.get("contentBase64")
                     if not isinstance(content, str):
                         raise ValueError("artifact upload requires contentBase64")
-                    manifest = artifacts.put_bytes(
-                        base64.b64decode(content),
+                    visibility = body.get("visibility") or "private"
+                    if visibility != "private" and not self._principal.has("artifact.share"):
+                        raise ArtifactAccessError("artifact.share scope required")
+                    manifest = artifacts.put_base64(
+                        content,
                         filename=body.get("filename"),
                         media_type=body.get("mediaType") or "application/octet-stream",
-                        created_by=body.get("createdBy") or "unknown",
+                        created_by=self._principal.subject,
+                        visibility=visibility,
+                        expected_sha256=body.get("sha256"),
                         policy=body.get("policy") or None,
                     )
                     self._json(manifest, status=HTTPStatus.CREATED)
                     return
+                if path == "/v1/artifacts/chunks":
+                    if not self._principal.has("artifact.write"):
+                        raise ArtifactAccessError("artifact.write scope required")
+                    visibility = body.get("visibility") or "private"
+                    if visibility != "private" and not self._principal.has("artifact.share"):
+                        raise ArtifactAccessError("artifact.share scope required")
+                    session = artifacts.initiate_upload(
+                        size_bytes=body.get("sizeBytes"), sha256=body.get("sha256"),
+                        chunk_size=body.get("chunkSize") or 4 * 1024 * 1024,
+                        filename=body.get("filename"), media_type=body.get("mediaType") or "application/octet-stream",
+                        created_by=self._principal.subject, visibility=visibility, policy=body.get("policy") or None,
+                    )
+                    self._json(session, status=HTTPStatus.CREATED)
+                    return
+                if path.startswith("/v1/artifacts/chunks/"):
+                    parts = path.split("/")
+                    upload_id = parts[4]
+                    session = artifacts.get_upload(upload_id)
+                    if session["createdBy"] != self._principal.subject and not self._principal.has("hub.admin"):
+                        raise KeyError("upload not found")
+                    if len(parts) == 6 and parts[5] == "commit":
+                        self._json(artifacts.commit_upload(upload_id))
+                        return
+                    if len(parts) == 6 and parts[5] == "cancel":
+                        self._json(artifacts.cancel_upload(upload_id))
+                        return
+                if path.startswith("/v1/artifacts/"):
+                    parts = path.split("/")
+                    artifact_id = parts[3]
+                    if len(parts) == 5 and parts[4] == "policy":
+                        self._json(artifacts.set_visibility(artifact_id, str(body.get("visibility") or ""), self._principal))
+                        return
+                    if len(parts) == 5 and parts[4] == "derive":
+                        if not derivations:
+                            self._api_error("DERIVATION_NOT_ENABLED", "artifact derivation is disabled", HTTPStatus.NOT_IMPLEMENTED)
+                            return
+                        result = derivations.derive(artifact_id, self._principal, retry=bool(body.get("retry", False)))
+                        self._json(result, status=HTTPStatus.CREATED if not result["replayed"] else HTTPStatus.OK)
+                        return
+                if derivations and path.startswith("/v1/derivations/"):
+                    parts = path.split("/")
+                    job_id = parts[3]
+                    if len(parts) == 5 and parts[4] == "cancel":
+                        self._json(derivations.cancel(job_id, self._principal))
+                        return
+                    if len(parts) == 5 and parts[4] == "purge":
+                        self._json(derivations.purge(job_id, self._principal))
+                        return
                 self._json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
             except KeyError:
                 self._api_error("NOT_FOUND", "resource not found", HTTPStatus.NOT_FOUND)
-            except AuthorizationError as exc:
+            except (AuthorizationError, ArtifactAccessError) as exc:
                 message = "required memory scope is missing"
                 if "memory.share" in str(exc):
                     message = "memory.share is required"
@@ -431,10 +578,76 @@ def make_server(
                 self._api_error("REQUEST_TOO_LARGE", "request body is too large", HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
             except RequestTooLargeError:
                 self._api_error("REQUEST_TOO_LARGE", "note body is too large", HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+            except ArtifactTooLargeError as exc:
+                self._api_error("ARTIFACT_TOO_LARGE", str(exc), HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+            except ArtifactConflictError as exc:
+                self._api_error("ARTIFACT_CONFLICT", str(exc), HTTPStatus.CONFLICT)
+            except (ArtifactError, DerivationError) as exc:
+                self._api_error("INVALID_ARTIFACT_OPERATION", str(exc), HTTPStatus.BAD_REQUEST)
             except HubMemoryError as exc:
                 self._api_error("INVALID_REQUEST", str(exc), HTTPStatus.BAD_REQUEST)
             except Exception as exc:
                 self._json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+
+        def do_PUT(self) -> None:
+            try:
+                parsed = urlparse(self.path)
+                path = parsed.path.rstrip("/") or "/"
+                if not self._check_auth():
+                    return
+                if not self._principal.has("artifact.write"):
+                    raise ArtifactAccessError("artifact.write scope required")
+                length_header = self.headers.get("Content-Length")
+                if length_header is None:
+                    self._api_error("LENGTH_REQUIRED", "Content-Length is required", HTTPStatus.LENGTH_REQUIRED)
+                    return
+                length = int(length_header)
+                if length < 0:
+                    raise ArtifactError("Content-Length must not be negative")
+                if length > artifacts.max_artifact_bytes:
+                    raise ArtifactTooLargeError(f"artifact exceeds {artifacts.max_artifact_bytes} byte limit")
+                if path == "/v1/artifacts/raw":
+                    visibility = self.headers.get("X-Artifact-Visibility") or "private"
+                    if visibility != "private" and not self._principal.has("artifact.share"):
+                        raise ArtifactAccessError("artifact.share scope required")
+                    manifest = artifacts.put_stream(
+                        self._read_binary_chunks(length),
+                        filename=self.headers.get("X-Artifact-Filename"),
+                        media_type=(self.headers.get("Content-Type") or "application/octet-stream").split(";", 1)[0].strip(),
+                        created_by=self._principal.subject,
+                        visibility=visibility,
+                        expected_sha256=self.headers.get("X-Artifact-SHA256"),
+                    )
+                    self._json(manifest, status=HTTPStatus.CREATED)
+                    return
+                if path.startswith("/v1/artifacts/chunks/"):
+                    parts = path.split("/")
+                    if len(parts) != 6:
+                        raise ArtifactError("chunk upload path must include an index")
+                    upload_id = parts[4]
+                    session = artifacts.get_upload(upload_id)
+                    if session["createdBy"] != self._principal.subject and not self._principal.has("hub.admin"):
+                        raise KeyError("upload not found")
+                    data = b"".join(self._read_binary_chunks(length))
+                    result = artifacts.put_chunk(
+                        upload_id, int(parts[5]), data,
+                        expected_sha256=self.headers.get("X-Chunk-SHA256"),
+                    )
+                    self._json(result, status=HTTPStatus.OK)
+                    return
+                self._json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
+            except KeyError:
+                self._api_error("NOT_FOUND", "resource not found", HTTPStatus.NOT_FOUND)
+            except ArtifactAccessError as exc:
+                self._api_error("SCOPE_DENIED", str(exc), HTTPStatus.FORBIDDEN)
+            except ArtifactTooLargeError as exc:
+                self._api_error("ARTIFACT_TOO_LARGE", str(exc), HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+            except ArtifactConflictError as exc:
+                self._api_error("ARTIFACT_CONFLICT", str(exc), HTTPStatus.CONFLICT)
+            except ArtifactError as exc:
+                self._api_error("INVALID_ARTIFACT", str(exc), HTTPStatus.BAD_REQUEST)
+            except Exception as exc:
+                self._api_error("INVALID_REQUEST", str(exc), HTTPStatus.BAD_REQUEST)
 
         def _handle_json_rpc(self, body: dict[str, Any]) -> None:
             request_id = body.get("id")
@@ -442,15 +655,19 @@ def make_server(
             params = body.get("params") or {}
             try:
                 if method in {"message/send", "tasks/send", "tasks/create"}:
-                    task, inserted = store.create_task(params)
+                    task, inserted = store.create_task(self._task_request(params))
                     result = {"inserted": inserted, "task": task}
                 elif method == "tasks/get":
+                    if not self._principal.has("task.read"):
+                        raise AuthorizationError("task.read scope required")
                     task_id = params.get("id") or params.get("taskId")
                     task = store.get_task(str(task_id)) if task_id else None
                     if not task:
                         raise KeyError("task not found")
                     result = task
                 elif method == "tasks/cancel":
+                    if not self._principal.has("task.write"):
+                        raise AuthorizationError("task.write scope required")
                     task_id = params.get("id") or params.get("taskId")
                     if not task_id:
                         raise ValueError("tasks/cancel requires id")
@@ -577,6 +794,8 @@ def run_server(
     search_mode: str = "keyword",
     search_url: str | None = None,
     search_cache_dir: str | Path | None = None,
+    enable_derivers: bool = False,
+    max_artifact_bytes: int = 64 * 1024 * 1024,
 ) -> None:
     httpd = make_server(
         state_dir, host=host, port=port, token=token, enable_memory=enable_memory,
@@ -584,6 +803,7 @@ def run_server(
         enable_watcher_side_effects=enable_watcher_side_effects,
         task_log_intents=task_log_intents, principals=principals,
         search_mode=search_mode, search_url=search_url, search_cache_dir=search_cache_dir,
+        enable_derivers=enable_derivers, max_artifact_bytes=max_artifact_bytes,
     )
     print(f"a2a-superhub listening on http://{host}:{httpd.server_port}")
     httpd.serve_forever()
