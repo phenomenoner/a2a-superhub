@@ -11,6 +11,7 @@ from a2a_superhub.auth import Principal
 from a2a_superhub.derivation import (
     DerivationError,
     DerivationService,
+    DeriverUnavailableError,
     ImageOcrDeriver,
     PdfTextDeriver,
 )
@@ -118,7 +119,7 @@ class MultimodalDerivationScenarios(unittest.TestCase):
         from PIL import Image, ImageDraw
 
         with tempfile.TemporaryDirectory() as tmp:
-            deriver = ImageOcrDeriver(max_bytes=1_000_000, max_pixels=10_000)
+            deriver = ImageOcrDeriver(max_bytes=1_000_000, max_pixels=100_000)
             artifacts, memory, service = self._services(tmp, derivers=[deriver])
             malformed = artifacts.put_bytes(
                 b"not-image", filename="bad.png", media_type="image/png",
@@ -127,7 +128,7 @@ class MultimodalDerivationScenarios(unittest.TestCase):
             with self.assertRaisesRegex(DerivationError, "malformed"):
                 service.derive(malformed["artifactId"], OWNER, retry=True)
 
-            huge = Image.new("RGB", (101, 101), "white")
+            huge = Image.new("RGB", (317, 316), "white")
             huge_bytes = io.BytesIO(); huge.save(huge_bytes, format="PNG")
             huge_artifact = artifacts.put_bytes(
                 huge_bytes.getvalue(), filename="huge.png", media_type="image/png",
@@ -136,17 +137,20 @@ class MultimodalDerivationScenarios(unittest.TestCase):
             with self.assertRaisesRegex(DerivationError, "pixel limit"):
                 service.derive(huge_artifact["artifactId"], OWNER, retry=True)
 
+            image = Image.new("RGB", (400, 120), "white")
+            ImageDraw.Draw(image).text((20, 40), "ORCHID 417", fill="black")
+            raw = io.BytesIO(); image.save(raw, format="PNG")
+            valid = artifacts.put_bytes(
+                raw.getvalue(), filename="label.png", media_type="image/png",
+                created_by=OWNER.subject,
+            )
             if shutil.which("tesseract"):
-                image = Image.new("RGB", (400, 120), "white")
-                ImageDraw.Draw(image).text((20, 40), "ORCHID 417", fill="black")
-                raw = io.BytesIO(); image.save(raw, format="PNG")
-                valid = artifacts.put_bytes(
-                    raw.getvalue(), filename="label.png", media_type="image/png",
-                    created_by=OWNER.subject,
-                )
                 result = service.derive(valid["artifactId"], OWNER)
                 body = memory.read_note(result["noteId"], OWNER)["body"].upper()
                 self.assertIn("ORCHID", body)
+            else:
+                with self.assertRaisesRegex(DeriverUnavailableError, "unavailable"):
+                    service.derive(valid["artifactId"], OWNER)
 
 
 if __name__ == "__main__":
