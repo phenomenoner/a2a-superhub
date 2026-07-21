@@ -21,7 +21,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, TextIO
 
 from a2a_superhub.client import HubClient, HubClientError
 from a2a_superhub.memory import atomic_write, note_path, parse_note, serialize_note
@@ -150,46 +150,104 @@ class Runtime:
         self.principals = principals
         self.port = port
         self.process: subprocess.Popen[str] | None = None
+        self.stdout_path = self.state.parent / "server.stdout.log"
+        self.stderr_path = self.state.parent / "server.stderr.log"
+        self._stdout_handle: TextIO | None = None
+        self._stderr_handle: TextIO | None = None
+        self._output_lock = threading.Lock()
+        self._expected_outage = False
+        self._unexpected_exit_recorded = False
 
     @property
     def base(self) -> str:
         return f"http://127.0.0.1:{self.port}"
 
+    def _close_output_locked(self) -> None:
+        for handle in (self._stdout_handle, self._stderr_handle):
+            if handle is not None and not handle.closed:
+                handle.close()
+        self._stdout_handle = None
+        self._stderr_handle = None
+
+    def unexpected_exit_code(self) -> int | None:
+        process = self.process
+        if process is None:
+            return None
+        return_code = process.poll()
+        if return_code is None:
+            return None
+        with self._output_lock:
+            if self._expected_outage:
+                return None
+            self._close_output_locked()
+            if not self._unexpected_exit_recorded:
+                self.stderr_path.parent.mkdir(parents=True, exist_ok=True)
+                with self.stderr_path.open("a", encoding="utf-8", newline="\n") as handle:
+                    handle.write(json.dumps({
+                        "at": utc_now(),
+                        "event": "unexpected-exit",
+                        "returnCode": return_code,
+                    }, sort_keys=True) + "\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                self._unexpected_exit_recorded = True
+        return int(return_code)
+
     def start(self) -> None:
         environment = os.environ.copy()
         source = str(ROOT / "src")
         environment["PYTHONPATH"] = source + (os.pathsep + environment["PYTHONPATH"] if environment.get("PYTHONPATH") else "")
-        self.process = subprocess.Popen(
-            [
-                sys.executable, str(ROOT / "tools" / "_soak_server.py"),
-                "--state", str(self.state), "--principals", str(self.principals), "--port", str(self.port),
-            ],
-            cwd=ROOT,
-            env=environment,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            text=True,
-        )
+        self.state.parent.mkdir(parents=True, exist_ok=True)
+        with self._output_lock:
+            self._close_output_locked()
+            self._stdout_handle = self.stdout_path.open("a", encoding="utf-8", newline="\n")
+            self._stderr_handle = self.stderr_path.open("a", encoding="utf-8", newline="\n")
+            self._unexpected_exit_recorded = False
+        try:
+            self.process = subprocess.Popen(
+                [
+                    sys.executable, str(ROOT / "tools" / "_soak_server.py"),
+                    "--state", str(self.state), "--principals", str(self.principals), "--port", str(self.port),
+                ],
+                cwd=ROOT,
+                env=environment,
+                stdin=subprocess.PIPE,
+                stdout=self._stdout_handle,
+                stderr=self._stderr_handle,
+                text=True,
+            )
+        except BaseException:
+            with self._output_lock:
+                self._close_output_locked()
+            raise
         deadline = time.monotonic() + 30
         client = HubClient(self.base, timeout=2)
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
+                self.unexpected_exit_code()
                 raise RuntimeError(f"hub process exited during startup with code {self.process.returncode}")
             try:
                 if client.ready().get("status") == "ready":
+                    with self._output_lock:
+                        self._expected_outage = False
                     return
             except HubClientError:
                 time.sleep(0.2)
         raise RuntimeError("hub process did not become ready")
 
     def stop(self, *, hard: bool) -> None:
+        with self._output_lock:
+            self._expected_outage = True
         process = self.process
         if process is None:
+            with self._output_lock:
+                self._close_output_locked()
             return
         if process.poll() is not None:
             if process.stdin is not None and not process.stdin.closed:
                 process.stdin.close()
+            with self._output_lock:
+                self._close_output_locked()
             return
         if hard:
             process.kill()
@@ -208,6 +266,8 @@ class Runtime:
         finally:
             if process.stdin is not None and not process.stdin.closed:
                 process.stdin.close()
+            with self._output_lock:
+                self._close_output_locked()
 
 
 class Soak:
@@ -297,6 +357,8 @@ class Soak:
             except HubClientError as exc:
                 if exc.kind != "connection":
                     raise
+                if self.runtime.unexpected_exit_code() is not None:
+                    raise SoakInvariantError("hub-process-exited") from None
                 with self.lock:
                     self.retries += 1
                 time.sleep(0.2)

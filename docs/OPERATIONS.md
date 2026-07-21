@@ -162,6 +162,14 @@ failure while attempting a final delivery, authorization, queue, and resource
 audit. A separate finalization failure is additive; it does not replace the
 earlier cause with a less specific transport error.
 
+Each child hub launch appends its process output to `server.stdout.log` and
+`server.stderr.log` inside the harness workspace. An unexpected child exit is
+reported immediately as `hub-process-exited` instead of being flattened into a
+connection deadline. The raw process logs are operator-private diagnostics:
+they can contain local paths or dependency messages and must not be copied into
+published evidence. Publish only the sanitized JSON result after independently
+validating its schema and claims.
+
 Operational readiness is a property of a tested commit and workload, not a
 version string. Consult the repository's operational evidence page before
 using that phrase, and preserve any stated workload or platform limitations.
