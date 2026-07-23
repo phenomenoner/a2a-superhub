@@ -303,6 +303,7 @@ class MemoryService:
         self._initialized = False
         self._authoritative_catalog: dict[str, Path] = {}
         self._scan_lock = threading.RLock()
+        self._scan_cycle_lock = threading.Lock()
         self._convergence_lock = threading.RLock()
         self._note_scan_cache: dict[
             str, tuple[tuple[int, int], dict[str, Any] | None, str | None, str | None]
@@ -1331,7 +1332,7 @@ class MemoryService:
             }
 
     def _scan_notes(self) -> tuple[dict[str, tuple[dict[str, Any], Path]], set[str]]:
-        with self._scan_lock:
+        with self._scan_cycle_lock:
             records: list[tuple[dict[str, Any], Path, str, str]] = []
             active_quarantine_paths: set[str] = set()
             observed_cache_keys: set[str] = set()
@@ -1357,8 +1358,9 @@ class MemoryService:
                 except Exception as exc:
                     self._record_quarantine(path, str(exc))
                     active_quarantine_paths.add(str(resolved.relative_to(self.root.resolve())))
-            for cache_key in set(self._note_scan_cache) - observed_cache_keys:
-                self._note_scan_cache.pop(cache_key, None)
+            with self._scan_lock:
+                for cache_key in set(self._note_scan_cache) - observed_cache_keys:
+                    self._note_scan_cache.pop(cache_key, None)
             by_id: dict[str, list[tuple[dict[str, Any], Path, str, str]]] = {}
             by_path: dict[str, list[tuple[dict[str, Any], Path, str, str]]] = {}
             for record in records:
@@ -1387,7 +1389,8 @@ class MemoryService:
                     )
                 else:
                     conn.execute("UPDATE quarantine SET state='resolved', resolved_at=? WHERE state='active'", (self.now(),))
-            self._authoritative_catalog = {key: path for key, (_, path) in valid.items()}
+            with self._scan_lock:
+                self._authoritative_catalog = {key: path for key, (_, path) in valid.items()}
             return valid, collided_ids
 
     def _record_quarantine(self, path: Path, reason: str) -> None:

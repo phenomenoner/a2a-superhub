@@ -37,6 +37,19 @@ transaction instead of being crowded out by a corpus-wide maintenance write.
 Contention that exceeds the bound remains an explicit failed operation; the hub
 does not silently discard the write.
 
+Only one corpus convergence scan is planned at a time, but the scan does not
+hold the cache/catalog lock for its full duration. Search can continue reading
+and authorizing unchanged notes while convergence inventories other files; each
+changed file still receives full parse, path, and authorization validation before
+it can become visible. This is a responsiveness boundary, not a throughput or
+latency promise.
+
+If an HTTP peer closes before a response is written, the server treats that
+connection as finished and does not try to write a second error response to the
+same socket. The accepted operation and authoritative state remain governed by
+their normal idempotency and durability rules; a disconnected caller must use
+its idempotency key or a read-back to resolve an uncertain response.
+
 ## What is authoritative
 
 | State | Backup treatment | Restore treatment |
@@ -160,7 +173,10 @@ Neither harness publishes a package or deploys a hub.
 If a workload worker or sample fails, the soak harness preserves that classified
 failure while attempting a final delivery, authorization, queue, and resource
 audit. A separate finalization failure is additive; it does not replace the
-earlier cause with a less specific transport error.
+earlier cause with a less specific transport error. Connection deadlines name
+the operation that exhausted its retry window, such as `operation-timeout:search`
+or `operation-timeout:note-create`, so operators can distinguish the affected
+surface without publishing raw process output.
 
 Each child hub launch appends its process output to `server.stdout.log` and
 `server.stderr.log` inside the harness workspace. An unexpected child exit is

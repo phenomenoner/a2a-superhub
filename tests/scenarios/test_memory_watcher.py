@@ -20,6 +20,68 @@ ADMIN = Principal("local.operator", "operator", "tok_admin", frozenset({"memory.
 
 
 class MemoryWatcherScenarios(unittest.TestCase):
+    def test_search_remains_available_while_convergence_scans_the_corpus(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            service = MemoryService(Path(tmp), enable_delivery=True)
+            created = service.create_note(
+                {
+                    "type": "observation",
+                    "title": "search availability sentinel",
+                    "visibility": "shared",
+                    "body": "SEARCH-AVAILABLE-DURING-SCAN",
+                },
+                OWNER,
+                idempotency_key="search-availability-sentinel",
+            )
+            service.init()
+
+            scan_entered = threading.Event()
+            release_scan = threading.Event()
+            search_finished = threading.Event()
+            convergence_failures: list[BaseException] = []
+            search_failures: list[BaseException] = []
+            search_results: list[list[dict]] = []
+            original_parse = service._cached_parse_note
+
+            def blocked_parse(path, **kwargs):
+                if threading.current_thread().name == "blocked-convergence" and not scan_entered.is_set():
+                    scan_entered.set()
+                    if not release_scan.wait(5):
+                        raise AssertionError("test did not release the blocked convergence scan")
+                return original_parse(path, **kwargs)
+
+            def converge() -> None:
+                try:
+                    service.sync_filesystem()
+                except BaseException as exc:  # pragma: no cover - asserted below
+                    convergence_failures.append(exc)
+
+            def search() -> None:
+                try:
+                    search_results.append(service.search("SEARCH-AVAILABLE-DURING-SCAN", OWNER))
+                except BaseException as exc:  # pragma: no cover - asserted below
+                    search_failures.append(exc)
+                finally:
+                    search_finished.set()
+
+            with patch.object(service, "_cached_parse_note", side_effect=blocked_parse):
+                convergence_thread = threading.Thread(target=converge, name="blocked-convergence")
+                convergence_thread.start()
+                self.assertTrue(scan_entered.wait(5), "convergence did not enter the corpus scan")
+                search_thread = threading.Thread(target=search, name="concurrent-search")
+                search_thread.start()
+                completed_while_scan_was_blocked = search_finished.wait(1)
+                release_scan.set()
+                convergence_thread.join(timeout=10)
+                search_thread.join(timeout=10)
+
+            self.assertTrue(completed_while_scan_was_blocked, "search waited for the full convergence scan")
+            self.assertFalse(convergence_thread.is_alive())
+            self.assertFalse(search_thread.is_alive())
+            self.assertEqual([], convergence_failures)
+            self.assertEqual([], search_failures)
+            self.assertEqual(created.note["id"], search_results[0][0]["id"])
+
     def test_convergence_does_not_hold_writer_lock_while_planning_unchanged_jobs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             service = MemoryService(Path(tmp), enable_delivery=True)

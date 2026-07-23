@@ -20,6 +20,27 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @unittest.skipIf(importlib.util.find_spec("pypdf") is None, "install the derive extra for the soak harness")
 class SingleHubSoakHarnessScenarios(unittest.TestCase):
+    def test_connection_deadline_reports_the_timed_out_operation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            soak = Soak(argparse.Namespace(
+                workspace=str(root / "workspace"), evidence=str(root / "evidence.json"),
+                duration_seconds=2.0, operation_interval=0.4, artifact_interval=1.0,
+                restart_interval=10.0, sample_interval=0.5,
+                max_rss_bytes=536_870_912, max_rss_growth_bytes=134_217_728,
+                max_state_bytes=2_147_483_648, max_pending_outbox=0,
+            ))
+
+            def disconnected() -> None:
+                raise HubClientError("simulated search timeout", kind="connection")
+
+            with (
+                patch("tools.single_hub_soak.time.monotonic", side_effect=[0.0, 0.0, 31.0]),
+                patch("tools.single_hub_soak.time.sleep"),
+            ):
+                with self.assertRaisesRegex(SoakInvariantError, "operation-timeout:search"):
+                    soak.retry(disconnected, label="search")
+
     def test_unexpected_child_exit_is_classified_before_connection_deadline(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

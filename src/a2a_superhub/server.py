@@ -179,11 +179,14 @@ def make_server(
 
         def _json(self, obj: Any, *, status: HTTPStatus = HTTPStatus.OK) -> None:
             data = json.dumps(obj, ensure_ascii=False, indent=2).encode("utf-8")
-            self.send_response(int(status))
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
+            try:
+                self.send_response(int(status))
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                self.close_connection = True
 
         def _api_error(self, code: str, message: str, status: HTTPStatus, *, retryable: bool = False) -> None:
             self._json(

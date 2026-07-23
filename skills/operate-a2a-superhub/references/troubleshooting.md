@@ -12,6 +12,14 @@ Do not repair, reindex, rotate credentials, migrate, restore, or delete state as
 part of diagnosis. If a requested diagnostic endpoint is absent in v1, report the
 capability gap instead of guessing from local files.
 
+For a single-hub endurance result, preserve the operation-specific failure code
+and the final sanitized audit as separate facts. A code such as
+`operation-timeout:search` identifies the surface whose connection retry window
+expired; it does not prove process exit, state loss, or authorization leakage.
+Confirm those claims from the child-process status and final audit. Raw child
+stdout/stderr is private operator evidence and must not be copied into a public
+report.
+
 If an approved offline operation reports an active state lease, stop. Identify the
 running hub process and arrange an explicit maintenance window; never bypass or remove
 the lock file. A backup public-target refusal means sensitive state was detected, not

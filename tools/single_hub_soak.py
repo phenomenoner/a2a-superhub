@@ -349,7 +349,7 @@ class Soak:
         if self.derived_note_id not in {item["id"] for item in found["items"]}:
             raise RuntimeError("derived PDF text was not provider-visible through search")
 
-    def retry(self, operation: Callable[[], Any]) -> Any:
+    def retry(self, operation: Callable[[], Any], *, label: str = "operation") -> Any:
         deadline = time.monotonic() + 30
         while not self.stop_event.is_set() and time.monotonic() < deadline:
             try:
@@ -364,7 +364,7 @@ class Soak:
                 time.sleep(0.2)
         if self.stop_event.is_set():
             raise SoakStopping("soak workload is stopping")
-        raise RuntimeError("operation could not reconnect within 30 seconds")
+        raise SoakInvariantError(f"operation-timeout:{label}")
 
     def task_worker(self) -> None:
         sequence = 0
@@ -374,7 +374,7 @@ class Soak:
                 "fromAgent": "agent.alpha", "toAgent": "agent.beta", "intent": "soak.observe",
                 "idempotencyKey": key, "payload": {"summary": "durability observation"},
                 "permissions": {"sideEffects": "default-deny", "scopes": []},
-            }))
+            }), label="task-create")
             with self.lock:
                 self.task_ids.add(response["task"]["taskId"])
             sequence += 1
@@ -386,7 +386,7 @@ class Soak:
             response = self.retry(lambda: self.owner.create_note({
                 "type": "observation", "title": f"soak note {sequence}", "visibility": "shared",
                 "about": ["agent.beta"], "body": "SOAK-STABLE concurrent note",
-            }, f"soak-note-{sequence}"))
+            }, f"soak-note-{sequence}"), label="note-create")
             with self.lock:
                 self.note_ids.add(response["id"])
                 self.delivery_note_ids.add(response["id"])
@@ -420,7 +420,7 @@ class Soak:
 
     def search_worker(self) -> None:
         while not self.stop_event.is_set():
-            result = self.retry(lambda: self.owner.search("SOAK-STABLE"))
+            result = self.retry(lambda: self.owner.search("SOAK-STABLE"), label="search")
             if not isinstance(result.get("items"), list):
                 raise SoakInvariantError("search-response-malformed")
             with self.lock:
@@ -429,10 +429,10 @@ class Soak:
 
     def inbox_worker(self) -> None:
         while not self.stop_event.is_set():
-            inbox = self.retry(lambda: self.reader.inbox("soak-reader", limit=100))
+            inbox = self.retry(lambda: self.reader.inbox("soak-reader", limit=100), label="inbox-read")
             cursor = inbox.get("cursor")
             if cursor:
-                self.retry(lambda: self.reader.ack_inbox("soak-reader", cursor))
+                self.retry(lambda: self.reader.ack_inbox("soak-reader", cursor), label="inbox-ack")
                 with self.lock:
                     self.inbox_acks += 1
             self.stop_event.wait(self.args.operation_interval / 2)
@@ -444,7 +444,7 @@ class Soak:
             manifest = self.retry(lambda: raw_artifact(
                 self.runtime.base, "soak-owner", data,
                 filename=f"soak-{sequence}.txt", media_type="text/plain", visibility="shared",
-            ))
+            ), label="artifact-upload")
             with self.lock:
                 self.artifact_ids.add(manifest["artifactId"])
             sequence += 1
@@ -475,7 +475,7 @@ class Soak:
         if process is None or process.poll() is not None:
             return
         operation = lambda: self.admin.request("GET", "/v1/operations/diagnostics")
-        diagnostics = operation() if self.stop_event.is_set() else self.retry(operation)
+        diagnostics = operation() if self.stop_event.is_set() else self.retry(operation, label="diagnostics")
         with self.lock:
             self.rss_samples.append(rss_bytes(process.pid))
             self.state_samples.append(int(diagnostics["resources"]["stateBytes"]))

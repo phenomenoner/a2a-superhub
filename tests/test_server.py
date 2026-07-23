@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import socket
 import tempfile
 import threading
 import unittest
@@ -22,6 +23,58 @@ def request_json(url: str, payload: dict | None = None, token: str | None = None
 
 
 class ServerTests(unittest.TestCase):
+    def test_client_disconnect_does_not_trigger_a_second_response(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            httpd = make_server(tmp, port=0)
+            request_finished = threading.Event()
+            handler_errors: list[tuple] = []
+            write_attempts: list[int] = []
+            original_json = httpd.RequestHandlerClass._json
+            original_shutdown_request = httpd.shutdown_request
+
+            class DisconnectedWriter:
+                def __init__(self, wrapped):
+                    self.wrapped = wrapped
+
+                def write(self, data):
+                    write_attempts.append(len(data))
+                    raise ConnectionAbortedError("simulated client disconnect")
+
+                def __getattr__(self, name):
+                    return getattr(self.wrapped, name)
+
+            def disconnected_json(handler, obj, *, status=200):
+                if not isinstance(handler.wfile, DisconnectedWriter):
+                    handler.wfile = DisconnectedWriter(handler.wfile)
+                return original_json(handler, obj, status=status)
+
+            def handle_error(request, client_address):
+                handler_errors.append(client_address)
+
+            def shutdown_request(request):
+                try:
+                    original_shutdown_request(request)
+                finally:
+                    request_finished.set()
+
+            httpd.RequestHandlerClass._json = disconnected_json
+            httpd.handle_error = handle_error
+            httpd.shutdown_request = shutdown_request
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            client = socket.create_connection(("127.0.0.1", httpd.server_port), timeout=5)
+            try:
+                client.sendall(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                self.assertTrue(request_finished.wait(5), "server did not finish the disconnected request")
+            finally:
+                client.close()
+                httpd.shutdown()
+                thread.join(timeout=5)
+                httpd.server_close()
+
+            self.assertEqual(1, len(write_attempts))
+            self.assertEqual([], handler_errors)
+
     def test_non_loopback_requires_authentication(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaisesRegex(ValueError, "non-loopback"):
