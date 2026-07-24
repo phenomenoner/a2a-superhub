@@ -20,6 +20,28 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @unittest.skipIf(importlib.util.find_spec("pypdf") is None, "install the derive extra for the soak harness")
 class SingleHubSoakHarnessScenarios(unittest.TestCase):
+    def test_restart_deadline_is_measured_after_replacement_is_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            soak = Soak(argparse.Namespace(
+                workspace=str(root / "workspace"), evidence=str(root / "evidence.json"),
+                duration_seconds=2.0, operation_interval=0.4, artifact_interval=1.0,
+                restart_interval=18.0, sample_interval=0.5,
+                max_rss_bytes=536_870_912, max_rss_growth_bytes=134_217_728,
+                max_state_bytes=2_147_483_648, max_pending_outbox=0,
+            ))
+            clock = [100.0]
+
+            def slow_restart(*, hard: bool) -> None:
+                self.assertFalse(hard)
+                clock[0] = 125.0
+
+            soak.restart = slow_restart
+            with patch("tools.single_hub_soak.time.monotonic", side_effect=lambda: clock[0]):
+                next_restart = soak.restart_and_schedule(hard=False)
+
+            self.assertEqual(143.0, next_restart)
+
     def test_repeated_cached_diagnostics_are_classified_as_stale(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

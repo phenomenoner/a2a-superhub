@@ -175,6 +175,11 @@ the tested commit. The evidence records the exact operation, artifact, restart,
 and resource-sampling intervals so readers can distinguish an endurance workload
 from a throughput benchmark.
 
+The restart interval is stable serving dwell time: after a replacement child
+reports ready and passes its authorization read-back, the next restart deadline
+is measured from that completed startup. A slow recovery never causes the
+harness to issue immediate catch-up restarts back-to-back.
+
 `tools/release_gate.py` builds wheel and source archives for the current and
 specified previous revision. Independent empty environments install and exercise
 the current wheel, current source archive, and packaged Skill before a separate

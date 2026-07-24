@@ -509,6 +509,10 @@ class Soak:
             self.restarts["controlledKill" if hard else "graceful"] += 1
         self.assert_reader_denied()
 
+    def restart_and_schedule(self, *, hard: bool) -> float:
+        self.restart(hard=hard)
+        return time.monotonic() + self.args.restart_interval
+
     def authoritative_ids(self) -> tuple[set[str], set[str], set[str]]:
         task_db = self.state / "tasks" / "hub-tasks.sqlite"
         connection = sqlite3.connect(task_db)
@@ -633,13 +637,14 @@ class Soak:
                     next_sample = now + self.args.sample_interval
                 if now >= next_restart:
                     try:
-                        self.restart(hard=hard)
+                        next_restart = self.restart_and_schedule(hard=hard)
+                    except SoakStopping:
+                        break
                     except Exception as exc:
                         self.failures.put(f"restart:{self.failure_code(exc)}")
                         self.stop_event.set()
                         break
                     hard = not hard
-                    next_restart = now + self.args.restart_interval
                 time.sleep(0.1)
             self.stop_event.set()
             for future in futures:
