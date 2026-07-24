@@ -86,8 +86,10 @@ authorization.
 2. Prefer `GET /v1/operations/diagnostics` or
    `a2a-superhub --state <state> operations diagnostics`.
 3. Report counts, queue depth, source/index revision, quarantine, retrieval model
-   identity, state bytes, and product version. Do not request or emit task payloads,
-   note bodies, token material, or local paths.
+   identity, state bytes, product version, and `generatedAt`. A concurrent request
+   may return the last completed snapshot while a refresh runs, so label an
+   unchanged timestamp as cached rather than current.
+   Do not request or emit task payloads, note bodies, token material, or local paths.
 4. Diagnosis is read-only. A degraded count is evidence for a separate approved
    action, not implicit repair authority.
 

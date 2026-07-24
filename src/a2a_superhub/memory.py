@@ -496,7 +496,7 @@ class MemoryService:
         with self._connect(target) as conn:
             conn.executescript(
                 """
-                PRAGMA journal_mode=DELETE;
+                PRAGMA journal_mode=WAL;
                 CREATE TABLE IF NOT EXISTS notes(note_id TEXT PRIMARY KEY, relative_path TEXT NOT NULL UNIQUE, author TEXT NOT NULL, visibility TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, recorded_at TEXT NOT NULL, content_hash TEXT NOT NULL, revision INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS relations(note_id TEXT NOT NULL, relation_type TEXT NOT NULL, target TEXT NOT NULL, PRIMARY KEY(note_id, relation_type, target));
                 CREATE TABLE IF NOT EXISTS manifest(note_id TEXT PRIMARY KEY, relative_path TEXT NOT NULL, content_hash TEXT NOT NULL, revision INTEGER NOT NULL);

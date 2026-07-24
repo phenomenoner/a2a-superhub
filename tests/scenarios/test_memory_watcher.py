@@ -20,6 +20,73 @@ ADMIN = Principal("local.operator", "operator", "tok_admin", frozenset({"memory.
 
 
 class MemoryWatcherScenarios(unittest.TestCase):
+    def test_keyword_search_reads_committed_snapshot_while_index_writer_is_open(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            service = MemoryService(Path(tmp))
+            created = service.create_note(
+                {
+                    "type": "observation",
+                    "title": "WAL search sentinel",
+                    "visibility": "shared",
+                    "body": "WAL-READS-LAST-COMMITTED-SNAPSHOT",
+                },
+                OWNER,
+                idempotency_key="wal-search-sentinel",
+            )
+            legacy = sqlite3.connect(service.index_path)
+            try:
+                legacy_mode = str(
+                    legacy.execute("PRAGMA journal_mode=DELETE").fetchone()[0]
+                )
+            finally:
+                legacy.close()
+            self.assertEqual("delete", legacy_mode.casefold())
+
+            service = MemoryService(Path(tmp))
+            service.init()
+            writer = sqlite3.connect(service.index_path, isolation_level=None)
+            writer.execute("PRAGMA busy_timeout=5000")
+            writer.execute("BEGIN EXCLUSIVE")
+            writer.execute(
+                "UPDATE notes SET body='uncommitted replacement' WHERE note_id=?",
+                (created.note["id"],),
+            )
+            search_finished = threading.Event()
+            search_results: list[list[dict]] = []
+            search_failures: list[BaseException] = []
+
+            def search() -> None:
+                try:
+                    search_results.append(
+                        service.search("WAL-READS-LAST-COMMITTED-SNAPSHOT", OWNER)
+                    )
+                except BaseException as exc:  # pragma: no cover - asserted below
+                    search_failures.append(exc)
+                finally:
+                    search_finished.set()
+
+            search_thread = threading.Thread(target=search, name="wal-concurrent-reader")
+            search_thread.start()
+            completed_while_writer_was_open = search_finished.wait(1)
+            writer.rollback()
+            writer.close()
+            search_thread.join(timeout=10)
+
+            journal = sqlite3.connect(service.index_path)
+            try:
+                journal_mode = str(journal.execute("PRAGMA journal_mode").fetchone()[0])
+            finally:
+                journal.close()
+
+            self.assertTrue(
+                completed_while_writer_was_open,
+                "keyword search waited for an uncommitted derived-index writer",
+            )
+            self.assertFalse(search_thread.is_alive())
+            self.assertEqual([], search_failures)
+            self.assertEqual(created.note["id"], search_results[0][0]["id"])
+            self.assertEqual("wal", journal_mode.casefold())
+
     def test_search_remains_available_while_convergence_scans_the_corpus(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             service = MemoryService(Path(tmp), enable_delivery=True)

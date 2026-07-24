@@ -298,6 +298,8 @@ class Soak:
         self.state_samples: list[int] = []
         self.private_note_id = ""
         self.derived_note_id = ""
+        self.last_diagnostics_generated_at: str | None = None
+        self.consecutive_stale_diagnostics = 0
 
     @staticmethod
     def failure_code(exc: Exception) -> str:
@@ -349,9 +351,15 @@ class Soak:
         if self.derived_note_id not in {item["id"] for item in found["items"]}:
             raise RuntimeError("derived PDF text was not provider-visible through search")
 
-    def retry(self, operation: Callable[[], Any], *, label: str = "operation") -> Any:
+    def retry(
+        self,
+        operation: Callable[[], Any],
+        *,
+        label: str = "operation",
+        allow_stopping: bool = False,
+    ) -> Any:
         deadline = time.monotonic() + 30
-        while not self.stop_event.is_set() and time.monotonic() < deadline:
+        while (allow_stopping or not self.stop_event.is_set()) and time.monotonic() < deadline:
             try:
                 return operation()
             except HubClientError as exc:
@@ -362,7 +370,7 @@ class Soak:
                 with self.lock:
                     self.retries += 1
                 time.sleep(0.2)
-        if self.stop_event.is_set():
+        if self.stop_event.is_set() and not allow_stopping:
             raise SoakStopping("soak workload is stopping")
         raise SoakInvariantError(f"operation-timeout:{label}")
 
@@ -459,9 +467,13 @@ class Soak:
             self.failures.put(f"worker:{label}:{self.failure_code(exc)}")
             self.stop_event.set()
 
-    def assert_reader_denied(self) -> None:
+    def assert_reader_denied(self, *, allow_stopping: bool = False) -> None:
         try:
-            self.reader.read_note(self.private_note_id)
+            self.retry(
+                lambda: self.reader.read_note(self.private_note_id),
+                label="authorization-check",
+                allow_stopping=allow_stopping,
+            )
         except HubClientError as exc:
             if exc.status != 404:
                 raise
@@ -476,6 +488,16 @@ class Soak:
             return
         operation = lambda: self.admin.request("GET", "/v1/operations/diagnostics")
         diagnostics = operation() if self.stop_event.is_set() else self.retry(operation, label="diagnostics")
+        generated_at = diagnostics.get("generatedAt")
+        if not isinstance(generated_at, str) or not generated_at:
+            raise SoakInvariantError("diagnostics-generation-missing")
+        if generated_at == self.last_diagnostics_generated_at:
+            self.consecutive_stale_diagnostics += 1
+            if self.consecutive_stale_diagnostics >= 3:
+                raise SoakInvariantError("diagnostics-stale")
+        else:
+            self.last_diagnostics_generated_at = generated_at
+            self.consecutive_stale_diagnostics = 0
         with self.lock:
             self.rss_samples.append(rss_bytes(process.pid))
             self.state_samples.append(int(diagnostics["resources"]["stateBytes"]))
@@ -558,15 +580,27 @@ class Soak:
     def drain_deliveries(self, *, timeout: float = 45) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            inbox = self.reader.inbox("soak-reader", limit=100)
-            self.reader.ack_inbox("soak-reader", inbox["cursor"])
+            inbox = self.retry(
+                lambda: self.reader.inbox("soak-reader", limit=100),
+                label="final-inbox-read",
+                allow_stopping=True,
+            )
+            cursor = inbox.get("cursor")
+            if cursor:
+                self.retry(
+                    lambda: self.reader.ack_inbox("soak-reader", cursor),
+                    label="final-inbox-ack",
+                    allow_stopping=True,
+                )
+                with self.lock:
+                    self.inbox_acks += 1
             with self.lock:
-                self.inbox_acks += 1
                 expected = set(self.delivery_note_ids)
             actual, unacknowledged, _ = self.delivery_audit()
             if expected <= actual and not unacknowledged:
                 return
             time.sleep(0.2)
+        raise SoakInvariantError("delivery-drain-timeout")
 
     def run(self) -> dict[str, Any]:
         self.prepare()
@@ -612,22 +646,36 @@ class Soak:
                 future.result(timeout=40)
 
         observed = time.monotonic() - started
-        diagnostics = None
-        try:
-            if self.runtime.process is None or self.runtime.process.poll() is not None:
-                self.runtime.start()
-            self.assert_reader_denied()
-            self.drain_deliveries()
-            diagnostics = self.admin.request("GET", "/v1/operations/diagnostics")
-        except Exception as exc:
-            self.failures.put(f"finalize:{self.failure_code(exc)}")
-        finally:
+        runtime_ready = self.runtime.process is not None and self.runtime.process.poll() is None
+        if not runtime_ready:
             try:
-                self.runtime.stop(hard=False)
+                self.runtime.start()
+                runtime_ready = True
             except Exception as exc:
-                self.failures.put(f"shutdown:{self.failure_code(exc)}")
-        if diagnostics is None:
+                self.failures.put(f"finalize:runtime:{self.failure_code(exc)}")
+        if runtime_ready:
+            try:
+                self.assert_reader_denied(allow_stopping=True)
+            except Exception as exc:
+                self.failures.put(f"finalize:authorization-check:{self.failure_code(exc)}")
+            try:
+                self.drain_deliveries()
+            except Exception as exc:
+                self.failures.put(f"finalize:delivery-drain:{self.failure_code(exc)}")
+        try:
+            self.runtime.stop(hard=False)
+        except Exception as exc:
+            self.failures.put(f"shutdown:{self.failure_code(exc)}")
+        try:
             diagnostics = self.offline_queue_diagnostics()
+        except Exception as exc:
+            self.failures.put(f"finalize:offline-audit:{self.failure_code(exc)}")
+            diagnostics = {
+                "stores": {
+                    "memory": {"pendingJobs": 1, "activeQuarantine": 1},
+                    "tasks": {"pendingTerminalOutbox": self.args.max_pending_outbox + 1},
+                },
+            }
         actual_tasks, actual_notes, actual_artifacts = self.authoritative_ids()
         actual_deliveries, unacknowledged_deliveries, _ = self.delivery_audit()
         lost_tasks = self.task_ids - actual_tasks

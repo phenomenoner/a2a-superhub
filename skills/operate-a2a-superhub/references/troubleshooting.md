@@ -4,7 +4,10 @@
 2. Distinguish connection failure, authentication failure, scope denial, version mismatch, and advertised degraded state.
 3. When `operationalDiagnostics` is advertised and the principal has `hub.admin`,
    capture payload-free store counts, source/index revisions, `lagRecords`, queue
-   depth, quarantine, retrieval model identity, state bytes, and product version.
+   depth, quarantine, retrieval model identity, state bytes, product version, and
+   `generatedAt`. Concurrent requests can receive the last completed snapshot
+   while one refresh is running; an unchanged timestamp is cached evidence, not
+   proof that current state was freshly collected.
 4. Sanitize tokens, note bodies, private paths, and real user data.
 5. State whether evidence is contract/static, integration, scenario, or soak altitude.
 
@@ -19,6 +22,11 @@ expired; it does not prove process exit, state loss, or authorization leakage.
 Confirm those claims from the child-process status and final audit. Raw child
 stdout/stderr is private operator evidence and must not be copied into a public
 report.
+
+If three consecutive endurance samples retain the same diagnostic `generatedAt`,
+report `diagnostics-stale`. Do not reinterpret prompt cached responses as healthy
+refresh progress. The final queue/quarantine/outbox audit is taken offline after
+the child stops and remains separate from the last online diagnostic snapshot.
 
 If an approved offline operation reports an active state lease, stop. Identify the
 running hub process and arrange an explicit maintenance window; never bypass or remove

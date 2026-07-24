@@ -57,7 +57,11 @@ deletes the ops database.
 `a2a-superhub.operations-diagnostics.v1` payload-free view: store counts,
 pending queue/outbox and quarantine counts, source/index revision, retrieval
 model identity, product version, and aggregate state bytes. It never returns
-task payloads, note bodies, token material, or local paths.
+task payloads, note bodies, token material, or local paths. Only one full
+diagnostic refresh runs at a time. While it runs, concurrent requests receive
+the last completed snapshot, with its original `generatedAt` value, instead of
+starting duplicate corpus scans. A caller can therefore detect an unchanged
+snapshot without confusing it with newly collected state.
 
 Authoritative backup/clean restore, recoverable retention, and Qdrant migration
 are intentionally local CLI operations, not remote mutation endpoints. The

@@ -9,7 +9,9 @@ import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
+from a2a_superhub import operations as operations_module
 from a2a_superhub.artifacts import ArtifactStore
 from a2a_superhub.auth import Principal
 from a2a_superhub.memory import MemoryService, atomic_write, note_path, serialize_note
@@ -61,6 +63,91 @@ class _FakeProvider:
 
 
 class OperationalReadinessScenarios(unittest.TestCase):
+    def test_http_diagnostics_coalesces_refresh_and_serves_last_completed_snapshot(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            seeded = self._seed(root)
+            principals = {
+                "admin-token": {
+                    "subject": "local.operator", "kind": "operator",
+                    "tokenId": "tok_admin_http", "scopes": ["hub.admin"],
+                },
+            }
+            server = make_server(seeded["state"], host="127.0.0.1", port=0, principals=principals)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            url = f"http://127.0.0.1:{server.server_port}/v1/operations/diagnostics"
+
+            def read_diagnostics():
+                request = urllib.request.Request(
+                    url, headers={"Authorization": "Bearer admin-token"},
+                )
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    return json.load(response)
+
+            refresh_started = threading.Event()
+            release_refresh = threading.Event()
+            first_finished = threading.Event()
+            retry_finished = threading.Event()
+            first_results: list[dict] = []
+            retry_results: list[dict] = []
+            failures: list[BaseException] = []
+            inventory_calls = 0
+            original_inventory = operations_module._state_inventory
+
+            def blocked_inventory(state):
+                nonlocal inventory_calls
+                inventory_calls += 1
+                refresh_started.set()
+                if not release_refresh.wait(5):
+                    raise AssertionError("test did not release diagnostics refresh")
+                return original_inventory(state)
+
+            def read_into(results, finished):
+                try:
+                    results.append(read_diagnostics())
+                except BaseException as exc:  # pragma: no cover - asserted below
+                    failures.append(exc)
+                finally:
+                    finished.set()
+
+            try:
+                completed_snapshot = read_diagnostics()
+                with patch.object(
+                    operations_module, "_state_inventory", side_effect=blocked_inventory,
+                ):
+                    first = threading.Thread(
+                        target=read_into, args=(first_results, first_finished),
+                        name="diagnostics-refresh",
+                    )
+                    first.start()
+                    self.assertTrue(refresh_started.wait(5), "diagnostics refresh did not start")
+                    retry = threading.Thread(
+                        target=read_into, args=(retry_results, retry_finished),
+                        name="diagnostics-retry",
+                    )
+                    retry.start()
+                    retry_returned_while_refresh_blocked = retry_finished.wait(1)
+                    release_refresh.set()
+                    first.join(timeout=10)
+                    retry.join(timeout=10)
+            finally:
+                release_refresh.set()
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+
+            self.assertTrue(
+                retry_returned_while_refresh_blocked,
+                "retry started a second corpus inventory instead of using the completed snapshot",
+            )
+            self.assertFalse(first.is_alive())
+            self.assertFalse(retry.is_alive())
+            self.assertEqual([], failures)
+            self.assertEqual(1, inventory_calls)
+            self.assertEqual(completed_snapshot, retry_results[0])
+            self.assertTrue(first_results[0]["payloadFree"])
+
     def _seed(self, root: Path) -> dict:
         state = root / "state"
         store = HubStore(state)

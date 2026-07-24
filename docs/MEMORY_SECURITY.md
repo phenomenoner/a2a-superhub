@@ -16,6 +16,12 @@ runtime binding remains outside the implemented surface.
 | FTS, KG, timeline | `memory-index.sqlite` | yes | no |
 | Vectors and payload index | Qdrant local or explicit server mode | yes | no |
 
+The disposable `memory-index.sqlite` uses SQLite WAL mode. Searches read the
+last committed derived snapshot while a convergence or reindex writer is
+active; they never expose uncommitted index rows. Markdown remains authoritative,
+and restart initialization migrates an existing derived index from the older
+rollback-journal mode.
+
 `reindex --full` may replace only derived stores. It must never clear jobs,
 deliveries, acknowledgments, or consumer cursors.
 

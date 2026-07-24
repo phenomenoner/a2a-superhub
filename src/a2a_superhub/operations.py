@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
 import shutil
 import sqlite3
 import tempfile
+import threading
 import zipfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -826,10 +828,38 @@ class OperationsDiagnostics:
         if memory_service is not None and memory_service.state_dir.resolve() != self.state_dir:
             raise ValueError("diagnostics memory service must use the same state directory")
         self.memory_service = memory_service
+        self._collection_lock = threading.Lock()
+        self._snapshot_lock = threading.Lock()
+        self._last_completed_snapshot: dict[str, Any] | None = None
 
     def collect(self, principal: Principal) -> dict[str, Any]:
         if not principal.has("hub.admin"):
             raise OperationsError("hub.admin scope required for operational diagnostics")
+
+        if not self._collection_lock.acquire(blocking=False):
+            with self._snapshot_lock:
+                completed = copy.deepcopy(self._last_completed_snapshot)
+            if completed is not None:
+                return completed
+            with self._collection_lock:
+                with self._snapshot_lock:
+                    completed = copy.deepcopy(self._last_completed_snapshot)
+                if completed is not None:
+                    return completed
+                return self._collect_and_cache()
+
+        try:
+            return self._collect_and_cache()
+        finally:
+            self._collection_lock.release()
+
+    def _collect_and_cache(self) -> dict[str, Any]:
+        completed = self._collect_uncached()
+        with self._snapshot_lock:
+            self._last_completed_snapshot = copy.deepcopy(completed)
+        return completed
+
+    def _collect_uncached(self) -> dict[str, Any]:
         tasks_db = self.state_dir / "tasks" / "hub-tasks.sqlite"
         ops_db = self.state_dir / "memory" / "ops.sqlite"
         operations_db = self.state_dir / "operations" / "operations.sqlite"

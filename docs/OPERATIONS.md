@@ -28,6 +28,14 @@ diagnostics, and each diagnostic sample inventories state files in one pass.
 This keeps monitoring responsive without treating cached derived data as
 authoritative or skipping path and symlink validation on later scans.
 
+Only one full diagnostic refresh is allowed to inventory the corpus at a time.
+If another authenticated request arrives during that refresh, it receives a
+copy of the last completed payload-free snapshot rather than starting a second
+scan. The snapshot retains its original `generatedAt` timestamp, so monitors
+can distinguish a prompt cached response from newly observed state and can
+alert if refresh progress remains stale. Before the first snapshot exists, a
+concurrent caller waits for that first collection to complete.
+
 Filesystem convergence also computes index-recovery work before opening a write
 transaction and creates delivery records only for notes whose authoritative
 revision changed. Unchanged corpus entries are not rewritten on every watcher
@@ -36,6 +44,13 @@ contention, so a concurrent API note or inbox cursor operation waits for a short
 transaction instead of being crowded out by a corpus-wide maintenance write.
 Contention that exceeds the bound remains an explicit failed operation; the hub
 does not silently discard the write.
+
+The disposable FTS/KG/timeline index runs in SQLite WAL mode. An active derived
+index writer therefore does not block keyword searches from reading the last
+committed snapshot, and readers never observe the writer's uncommitted rows.
+Startup initialization migrates an existing derived index from rollback-journal
+mode. This changes concurrency behavior only: Markdown is still authoritative,
+and the entire index remains safe to rebuild.
 
 Only one corpus convergence scan is planned at a time, but the scan does not
 hold the cache/catalog lock for its full duration. Search can continue reading
@@ -177,6 +192,13 @@ earlier cause with a less specific transport error. Connection deadlines name
 the operation that exhausted its retry window, such as `operation-timeout:search`
 or `operation-timeout:note-create`, so operators can distinguish the affected
 surface without publishing raw process output.
+
+The harness treats three consecutive samples with the same diagnostic
+`generatedAt` value as a stale-refresh failure. During finalization it drains
+deliveries while the child is available, stops the child, and then reads queue,
+quarantine, and terminal-outbox counts directly from the stopped authoritative
+databases. A stale or disconnected HTTP diagnostic response is therefore never
+substituted for the final exact queue audit.
 
 Each child hub launch appends its process output to `server.stdout.log` and
 `server.stderr.log` inside the harness workspace. An unexpected child exit is

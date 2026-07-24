@@ -20,6 +20,34 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @unittest.skipIf(importlib.util.find_spec("pypdf") is None, "install the derive extra for the soak harness")
 class SingleHubSoakHarnessScenarios(unittest.TestCase):
+    def test_repeated_cached_diagnostics_are_classified_as_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            soak = Soak(argparse.Namespace(
+                workspace=str(root / "workspace"), evidence=str(root / "evidence.json"),
+                duration_seconds=2.0, operation_interval=0.4, artifact_interval=1.0,
+                restart_interval=10.0, sample_interval=0.5,
+                max_rss_bytes=536_870_912, max_rss_growth_bytes=134_217_728,
+                max_state_bytes=2_147_483_648, max_pending_outbox=0,
+            ))
+            process = unittest.mock.Mock()
+            process.pid = 123
+            process.poll.return_value = None
+            soak.runtime.process = process
+            snapshot = {
+                "generatedAt": "2026-07-24T00:00:00Z",
+                "resources": {"stateBytes": 1024},
+            }
+            soak.admin = unittest.mock.Mock()
+            soak.admin.request.return_value = snapshot
+
+            with patch("tools.single_hub_soak.rss_bytes", return_value=2048):
+                soak.sample()
+                soak.sample()
+                soak.sample()
+                with self.assertRaisesRegex(SoakInvariantError, "diagnostics-stale"):
+                    soak.sample()
+
     def test_connection_deadline_reports_the_timed_out_operation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -93,12 +121,22 @@ class SingleHubSoakHarnessScenarios(unittest.TestCase):
                 raise HubClientError("simulated diagnostics timeout", kind="connection")
 
             soak.sample = fail_sample
+            soak.admin = unittest.mock.Mock()
+            soak.admin.request.return_value = {
+                "stores": {
+                    "memory": {"pendingJobs": 99, "activeQuarantine": 99},
+                    "tasks": {"pendingTerminalOutbox": 99},
+                },
+            }
             result = soak.run()
             self.assertFalse(result["passed"])
             self.assertIn("sample:HubClientError:connection:0:none", result["failures"])
             self.assertIn("audit", result)
             self.assertEqual(0, result["audit"]["lostTasks"])
             self.assertEqual(0, result["audit"]["activeQuarantine"])
+            self.assertEqual(0, result["audit"]["pendingJobs"])
+            self.assertEqual(0, result["audit"]["pendingTerminalOutbox"])
+            soak.admin.request.assert_not_called()
 
     def test_real_http_load_graceful_restart_controlled_kill_and_final_audit(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
