@@ -11,7 +11,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from a2a_superhub.auth import Principal
+from a2a_superhub.client import HubClient
 from a2a_superhub.memory import MemoryService, MemoryWatcher, QuarantineError, note_path, parse_note, path_collision_key, serialize_note, validate_existing_path
+from a2a_superhub.server import make_server
 import yaml
 
 
@@ -108,14 +110,14 @@ class MemoryWatcherScenarios(unittest.TestCase):
             convergence_failures: list[BaseException] = []
             search_failures: list[BaseException] = []
             search_results: list[list[dict]] = []
-            original_parse = service._cached_parse_note
+            original_signature = service._file_signature
 
-            def blocked_parse(path, **kwargs):
+            def blocked_signature(path):
                 if threading.current_thread().name == "blocked-convergence" and not scan_entered.is_set():
                     scan_entered.set()
                     if not release_scan.wait(5):
                         raise AssertionError("test did not release the blocked convergence scan")
-                return original_parse(path, **kwargs)
+                return original_signature(path)
 
             def converge() -> None:
                 try:
@@ -131,7 +133,7 @@ class MemoryWatcherScenarios(unittest.TestCase):
                 finally:
                     search_finished.set()
 
-            with patch.object(service, "_cached_parse_note", side_effect=blocked_parse):
+            with patch.object(service, "_file_signature", side_effect=blocked_signature):
                 convergence_thread = threading.Thread(target=converge, name="blocked-convergence")
                 convergence_thread.start()
                 self.assertTrue(scan_entered.wait(5), "convergence did not enter the corpus scan")
@@ -148,6 +150,162 @@ class MemoryWatcherScenarios(unittest.TestCase):
             self.assertEqual([], convergence_failures)
             self.assertEqual([], search_failures)
             self.assertEqual(created.note["id"], search_results[0][0]["id"])
+
+    def test_http_search_remains_available_while_filesystem_convergence_reads_slow_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            principals = {
+                "owner-token": {
+                    "subject": "agent.alpha",
+                    "kind": "agent",
+                    "tokenId": "tok_http_owner",
+                    "scopes": ["memory.read", "memory.write", "memory.share"],
+                },
+                "admin-token": {
+                    "subject": "local.operator",
+                    "kind": "operator",
+                    "tokenId": "tok_http_admin",
+                    "scopes": ["hub.admin"],
+                },
+            }
+            server = make_server(
+                Path(tmp),
+                host="127.0.0.1",
+                port=0,
+                principals=principals,
+                enable_memory=True,
+                enable_delivery=True,
+            )
+            server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+            server_thread.start()
+            client = HubClient(
+                f"http://127.0.0.1:{server.server_port}",
+                token="owner-token",
+                timeout=5,
+            )
+            admin = HubClient(
+                f"http://127.0.0.1:{server.server_port}",
+                token="admin-token",
+                timeout=5,
+            )
+            service = server.memory_service
+            self.assertIsNotNone(service)
+            created = client.create_note(
+                {
+                    "type": "observation",
+                    "title": "HTTP search availability sentinel",
+                    "visibility": "shared",
+                    "body": "HTTP-SEARCH-AVAILABLE-DURING-SCAN",
+                },
+                "http-search-availability-sentinel",
+            )
+            filesystem_id = "mem_00000000000000000000000000000003"
+            filesystem_note = {
+                "schema": "a2a-superhub.memory.note.v1",
+                "id": filesystem_id,
+                "type": "observation",
+                "title": "slow filesystem addition",
+                "author": "local.operator",
+                "visibility": "shared",
+                "recordedAt": "2026-07-25T00:00:00Z",
+                "source": {"kind": "filesystem"},
+                "body": "filesystem convergence payload",
+            }
+            path = note_path(service.root, filesystem_id)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(serialize_note(filesystem_note))
+
+            scan_entered = threading.Event()
+            release_scan = threading.Event()
+            search_read_entered = threading.Event()
+            search_finished = threading.Event()
+            diagnostics_finished = threading.Event()
+            convergence_failures: list[BaseException] = []
+            search_failures: list[BaseException] = []
+            diagnostics_failures: list[BaseException] = []
+            search_results: list[dict] = []
+            diagnostics_results: list[dict] = []
+            original_signature = service._file_signature
+
+            def blocked_signature(candidate):
+                if threading.current_thread().name == "http-blocked-convergence" and not scan_entered.is_set():
+                    scan_entered.set()
+                    if not release_scan.wait(5):
+                        raise AssertionError("test did not release the blocked HTTP convergence scan")
+                elif scan_entered.is_set() and not release_scan.is_set():
+                    search_read_entered.set()
+                return original_signature(candidate)
+
+            def converge() -> None:
+                try:
+                    service.sync_filesystem()
+                except BaseException as exc:  # pragma: no cover - asserted below
+                    convergence_failures.append(exc)
+
+            def search() -> None:
+                try:
+                    search_results.append(client.search("HTTP-SEARCH-AVAILABLE-DURING-SCAN"))
+                except BaseException as exc:  # pragma: no cover - asserted below
+                    search_failures.append(exc)
+                finally:
+                    search_finished.set()
+
+            def diagnose() -> None:
+                try:
+                    diagnostics_results.append(
+                        admin.request("GET", "/v1/operations/diagnostics")
+                    )
+                except BaseException as exc:  # pragma: no cover - asserted below
+                    diagnostics_failures.append(exc)
+                finally:
+                    diagnostics_finished.set()
+
+            try:
+                with patch.object(service, "_file_signature", side_effect=blocked_signature):
+                    convergence_thread = threading.Thread(target=converge, name="http-blocked-convergence")
+                    convergence_thread.start()
+                    self.assertTrue(scan_entered.wait(5), "HTTP convergence did not enter the corpus scan")
+                    search_thread = threading.Thread(target=search, name="http-concurrent-search")
+                    diagnostics_thread = threading.Thread(target=diagnose, name="http-concurrent-diagnostics")
+                    search_thread.start()
+                    diagnostics_thread.start()
+                    search_read_while_scan_was_blocked = search_read_entered.wait(1)
+                    completed_while_scan_was_blocked = search_finished.wait(3)
+                    diagnostics_completed_while_scan_was_blocked = diagnostics_finished.wait(3)
+                    release_scan.set()
+                    convergence_thread.join(timeout=10)
+                    search_thread.join(timeout=10)
+                    diagnostics_thread.join(timeout=10)
+            finally:
+                release_scan.set()
+                server.shutdown()
+                server.server_close()
+                server_thread.join(timeout=5)
+
+            self.assertTrue(
+                search_read_while_scan_was_blocked,
+                "real HTTP keyword search could not read authoritative state during filesystem convergence",
+            )
+            self.assertTrue(
+                completed_while_scan_was_blocked,
+                "real HTTP keyword search waited for filesystem convergence",
+            )
+            self.assertTrue(
+                diagnostics_completed_while_scan_was_blocked,
+                "payload-free diagnostics waited for filesystem convergence",
+            )
+            self.assertFalse(convergence_thread.is_alive())
+            self.assertFalse(search_thread.is_alive())
+            self.assertFalse(diagnostics_thread.is_alive())
+            self.assertEqual([], convergence_failures)
+            self.assertEqual([], search_failures)
+            self.assertEqual([], diagnostics_failures)
+            self.assertEqual(created["id"], search_results[0]["items"][0]["id"])
+            self.assertGreaterEqual(
+                search_results[0]["sourceRevision"],
+                search_results[0]["items"][0]["sourceRevision"],
+                "completed index status lagged behind a completed API write",
+            )
+            self.assertEqual(0, diagnostics_results[0]["stores"]["memory"]["index"]["lagRecords"])
 
     def test_convergence_does_not_hold_writer_lock_while_planning_unchanged_jobs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

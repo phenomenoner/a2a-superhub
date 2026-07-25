@@ -316,7 +316,7 @@ def make_server(
                         }
                         for note in notes
                     ]
-                    self._json({"items": items, "search": memory.search_status(), **memory.index_status()})
+                    self._json({"items": items, "search": memory.search_status(), **memory.index_status_snapshot()})
                     return
                 if memory and path.startswith("/v1/memory/notes/"):
                     if not self._principal.has("memory.read"):
@@ -694,6 +694,7 @@ def make_server(
                 self._json({"jsonrpc": "2.0", "id": request_id, "error": {"code": -32000, "message": str(exc)}}, status=HTTPStatus.BAD_REQUEST)
 
     httpd = ThreadingHTTPServer((host, port), Handler)
+    httpd.memory_service = memory  # type: ignore[attr-defined]
     if memory:
         try:
             from watchdog.events import FileSystemEventHandler

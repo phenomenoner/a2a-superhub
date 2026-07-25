@@ -20,21 +20,24 @@ of authoritative notes lagging their derived index, index revision, retrieval
 model identity, state bytes, and product version without task bodies, note text,
 bearer tokens, or local paths.
 
-Repeated lag checks reuse fully validated notes while their file modification
-time and size remain unchanged. A new or changed Markdown file is parsed and
-validated again before it can affect the reported lag, and process startup begins
-with an empty cache. The HTTP server shares that validated cache with operational
-diagnostics, and each diagnostic sample inventories state files in one pass.
-This keeps monitoring responsive without treating cached derived data as
-authoritative or skipping path and symlink validation on later scans.
+Filesystem convergence reuses fully validated notes while their file
+modification time and size remain unchanged. A new or changed Markdown file is
+parsed and validated again before it can affect the completed source/index
+snapshot, and process startup begins with an empty cache. Search and operational
+diagnostics read that last completed snapshot instead of waiting for an
+unrelated convergence scan. Completed API writes advance it immediately. This
+keeps serving responsive without treating the derived index as authoritative or
+skipping path and symlink validation on later scans.
 
-Only one full diagnostic refresh is allowed to inventory the corpus at a time.
-If another authenticated request arrives during that refresh, it receives a
-copy of the last completed payload-free snapshot rather than starting a second
-scan. The snapshot retains its original `generatedAt` timestamp, so monitors
-can distinguish a prompt cached response from newly observed state and can
-alert if refresh progress remains stale. Before the first snapshot exists, a
-concurrent caller waits for that first collection to complete.
+Only one full diagnostic refresh inventories state files at a time. If another
+authenticated request arrives during that refresh, it receives a copy of the
+last completed payload-free diagnostic snapshot rather than starting a second
+inventory. That cached response retains its original `generatedAt` timestamp,
+so monitors can distinguish it from newly collected diagnostics and can alert
+if refresh progress remains stale. The source/index fields within a fresh
+diagnostic response are separately the last completed convergence snapshot;
+they can remain unchanged while a filesystem scan is active. Before the first
+diagnostic snapshot exists, a concurrent caller waits for the first collection.
 
 Filesystem convergence also computes index-recovery work before opening a write
 transaction and creates delivery records only for notes whose authoritative
@@ -179,6 +182,12 @@ The restart interval is stable serving dwell time: after a replacement child
 reports ready and passes its authorization read-back, the next restart deadline
 is measured from that completed startup. A slow recovery never causes the
 harness to issue immediate catch-up restarts back-to-back.
+
+The harness gives each replacement child up to 60 seconds to complete startup.
+This is a recovery budget, not a live-request latency allowance: ordinary
+operations retain their 30-second connection retry window. A request that
+overlaps a harness-owned controlled restart may use the measured recovery
+window, and that extension ends as soon as the replacement reports ready.
 
 `tools/release_gate.py` builds wheel and source archives for the current and
 specified previous revision. Independent empty environments install and exercise

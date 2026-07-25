@@ -29,6 +29,9 @@ from a2a_superhub.memory import atomic_write, note_path, parse_note, serialize_n
 
 EVIDENCE_SCHEMA = "a2a-superhub.single-hub-soak.v1"
 ROOT = Path(__file__).resolve().parents[1]
+OPERATION_RETRY_SECONDS = 30.0
+EXPECTED_OUTAGE_RETRY_SECONDS = 60.0
+STARTUP_READY_TIMEOUT_SECONDS = 60.0
 
 
 class SoakStopping(RuntimeError):
@@ -193,6 +196,10 @@ class Runtime:
                 self._unexpected_exit_recorded = True
         return int(return_code)
 
+    def expected_outage(self) -> bool:
+        with self._output_lock:
+            return self._expected_outage
+
     def start(self) -> None:
         environment = os.environ.copy()
         source = str(ROOT / "src")
@@ -220,7 +227,7 @@ class Runtime:
             with self._output_lock:
                 self._close_output_locked()
             raise
-        deadline = time.monotonic() + 30
+        deadline = time.monotonic() + STARTUP_READY_TIMEOUT_SECONDS
         client = HubClient(self.base, timeout=2)
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
@@ -358,7 +365,8 @@ class Soak:
         label: str = "operation",
         allow_stopping: bool = False,
     ) -> Any:
-        deadline = time.monotonic() + 30
+        deadline = time.monotonic() + OPERATION_RETRY_SECONDS
+        expected_outage_extension_used = False
         while (allow_stopping or not self.stop_event.is_set()) and time.monotonic() < deadline:
             try:
                 return operation()
@@ -367,6 +375,12 @@ class Soak:
                     raise
                 if self.runtime.unexpected_exit_code() is not None:
                     raise SoakInvariantError("hub-process-exited") from None
+                if self.runtime.expected_outage() and not expected_outage_extension_used:
+                    deadline = max(
+                        deadline,
+                        time.monotonic() + EXPECTED_OUTAGE_RETRY_SECONDS,
+                    )
+                    expected_outage_extension_used = True
                 with self.lock:
                     self.retries += 1
                 time.sleep(0.2)
@@ -589,8 +603,13 @@ class Soak:
                 label="final-inbox-read",
                 allow_stopping=True,
             )
+            items = inbox.get("items")
+            if not isinstance(items, list):
+                raise SoakInvariantError("delivery-drain-inbox-malformed")
             cursor = inbox.get("cursor")
-            if cursor:
+            if items:
+                if not cursor:
+                    raise SoakInvariantError("delivery-drain-cursor-missing")
                 self.retry(
                     lambda: self.reader.ack_inbox("soak-reader", cursor),
                     label="final-inbox-ack",
@@ -603,7 +622,7 @@ class Soak:
             actual, unacknowledged, _ = self.delivery_audit()
             if expected <= actual and not unacknowledged:
                 return
-            time.sleep(0.2)
+            time.sleep(1.0)
         raise SoakInvariantError("delivery-drain-timeout")
 
     def run(self) -> dict[str, Any]:

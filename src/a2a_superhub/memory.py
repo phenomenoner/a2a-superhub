@@ -305,6 +305,8 @@ class MemoryService:
         self._scan_lock = threading.RLock()
         self._scan_cycle_lock = threading.Lock()
         self._convergence_lock = threading.RLock()
+        self._index_status_lock = threading.Lock()
+        self._last_completed_index_status: dict[str, Any] | None = None
         self._note_scan_cache: dict[
             str, tuple[tuple[int, int], dict[str, Any] | None, str | None, str | None]
         ] = {}
@@ -316,32 +318,41 @@ class MemoryService:
 
     def _cached_parse_note(self, path: Path, *, resolved: Path | None = None) -> dict[str, Any]:
         """Parse changed notes once while retaining full validation on every change."""
-        with self._scan_lock:
-            target = resolved or path.resolve()
-            cache_key = str(target)
-            for _ in range(2):
-                before = self._file_signature(target)
+        target = resolved or path.resolve()
+        cache_key = str(target)
+        for _ in range(2):
+            before = self._file_signature(target)
+            with self._scan_lock:
                 cached = self._note_scan_cache.get(cache_key)
-                if cached and cached[0] == before:
-                    if cached[2] is not None:
-                        raise QuarantineError(cached[2])
-                    assert cached[1] is not None
-                    return copy.deepcopy(cached[1])
-                data = target.read_bytes()
-                after = self._file_signature(target)
-                if before != after:
-                    continue
-                try:
-                    note = parse_note(data)
-                except Exception as exc:
-                    reason = str(exc)
+            if cached and cached[0] == before:
+                if cached[2] is not None:
+                    raise QuarantineError(cached[2])
+                assert cached[1] is not None
+                return copy.deepcopy(cached[1])
+            data = target.read_bytes()
+            after = self._file_signature(target)
+            if before != after:
+                continue
+            try:
+                note = parse_note(data)
+            except Exception as exc:
+                reason = str(exc)
+                with self._scan_lock:
+                    current = self._note_scan_cache.get(cache_key)
+                    if current is not cached and current is not None and current[0] != after:
+                        continue
                     self._note_scan_cache[cache_key] = (after, None, reason, None)
-                    raise QuarantineError(reason) from exc
-                self._note_scan_cache[cache_key] = (
-                    after, copy.deepcopy(note), None, self._revision(note),
-                )
-                return note
-            raise QuarantineError("note changed during scan")
+                raise QuarantineError(reason) from exc
+            entry = (
+                after, copy.deepcopy(note), None, self._revision(note),
+            )
+            with self._scan_lock:
+                current = self._note_scan_cache.get(cache_key)
+                if current is not cached and current is not None and current[0] != after:
+                    continue
+                self._note_scan_cache[cache_key] = entry
+            return note
+        raise QuarantineError("note changed during scan")
 
     def _remember_note(self, path: Path, note: dict[str, Any]) -> None:
         with self._scan_lock:
@@ -489,6 +500,7 @@ class MemoryService:
                         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                         (corpus_revision,),
                     )
+        self._remember_index_status(self._index_status_from_scan(valid, collided_ids))
         self._initialized = True
 
     def _init_index(self, index_path: Path | None = None) -> None:
@@ -691,6 +703,7 @@ class MemoryService:
         self.record_receipt(trace_id, "index", operation_id, principal.subject, "indexed", {"noteId": note["id"], "revision": self.source_revision(note["id"])})
         if self.enable_delivery:
             self.generate_deliveries(note["id"], trace_id=trace_id)
+        self._advance_completed_index_status(note)
         _hit_failpoint(failpoint, "after_delivery_before_response")
         return CreateResult(note, True, self._revision(note), trace_id)
 
@@ -712,6 +725,7 @@ class MemoryService:
         self.record_receipt(trace_id, "index", operation_id, principal.subject, "indexed", {"noteId": note["id"], "revision": self.source_revision(note["id"])})
         if self.enable_delivery:
             self.generate_deliveries(note["id"], trace_id=trace_id)
+        self._advance_completed_index_status(note)
 
     @staticmethod
     def _delivery_id(note_id: str, recipient: str, reason: str) -> str:
@@ -1715,8 +1729,11 @@ class MemoryService:
             "consistency": "current" if indexed_hash == source_hash else "stale",
         }
 
-    def index_status(self, *, include_lag_records: bool = False) -> dict[str, Any]:
-        valid, collided_ids = self._scan_notes()
+    def _index_status_from_scan(
+        self,
+        valid: dict[str, tuple[dict[str, Any], Path]],
+        collided_ids: set[str],
+    ) -> dict[str, Any]:
         with self._connect(self.index_path) as conn:
             manifest = {
                 str(row["note_id"]).casefold(): (int(row["revision"]), row["content_hash"])
@@ -1738,10 +1755,56 @@ class MemoryService:
             "indexedRevision": indexed_revision,
             "consistency": "eventual",
             "degraded": ["index-stale"] if lag_records else [],
+            "lagRecords": lag_records,
         }
-        if include_lag_records:
-            result["lagRecords"] = lag_records
         return result
+
+    def _remember_index_status(self, status: dict[str, Any]) -> None:
+        with self._index_status_lock:
+            self._last_completed_index_status = copy.deepcopy(status)
+
+    def _advance_completed_index_status(self, note: dict[str, Any]) -> None:
+        consistency = self.note_consistency(note["id"])
+        with self._index_status_lock:
+            status = copy.deepcopy(self._last_completed_index_status) or {
+                "sourceRevision": 0,
+                "indexedRevision": 0,
+                "consistency": "eventual",
+                "degraded": [],
+                "lagRecords": 0,
+            }
+            status["sourceRevision"] = max(
+                int(status["sourceRevision"]),
+                int(consistency["sourceRevision"]),
+            )
+            status["indexedRevision"] = max(
+                int(status["indexedRevision"]),
+                int(consistency["indexedRevision"]),
+            )
+            if consistency["consistency"] != "current":
+                status["lagRecords"] = max(1, int(status.get("lagRecords", 0)))
+            status["degraded"] = ["index-stale"] if status.get("lagRecords") else []
+            self._last_completed_index_status = status
+
+    @staticmethod
+    def _public_index_status(status: dict[str, Any], *, include_lag_records: bool) -> dict[str, Any]:
+        result = copy.deepcopy(status)
+        if not include_lag_records:
+            result.pop("lagRecords", None)
+        return result
+
+    def index_status_snapshot(self, *, include_lag_records: bool = False) -> dict[str, Any]:
+        with self._index_status_lock:
+            status = copy.deepcopy(self._last_completed_index_status)
+        if status is None:
+            return self.index_status(include_lag_records=include_lag_records)
+        return self._public_index_status(status, include_lag_records=include_lag_records)
+
+    def index_status(self, *, include_lag_records: bool = False) -> dict[str, Any]:
+        valid, collided_ids = self._scan_notes()
+        status = self._index_status_from_scan(valid, collided_ids)
+        self._remember_index_status(status)
+        return self._public_index_status(status, include_lag_records=include_lag_records)
 
     def rebuild_index(self, *, failpoint: str | Callable[[str], None] | None = None) -> int:
         if not self.ops_path.exists():
@@ -1755,7 +1818,7 @@ class MemoryService:
         generation = self.root / f".index-generation-{uuid.uuid4().hex}.sqlite"
         self._init_index(generation)
         count = 0
-        valid, _ = self._scan_notes()
+        valid, collided_ids = self._scan_notes()
         try:
             with self._connect(generation) as generation_conn:
                 for note, path in valid.values():
@@ -1771,6 +1834,9 @@ class MemoryService:
             _hit_failpoint(failpoint, "before_index_generation_swap")
             os.replace(generation, self.index_path)
             _hit_failpoint(failpoint, "after_index_generation_swap")
+            self._remember_index_status(
+                self._index_status_from_scan(valid, collided_ids)
+            )
             return count
         finally:
             if generation.exists():
@@ -1865,6 +1931,7 @@ class MemoryService:
             ]
             for note in changed_notes:
                 self._generate_deliveries_for_note(note)
+        self._remember_index_status(self._index_status_from_scan(valid, collided_ids))
         return {"assigned": assigned, "enqueued": enqueued, "indexed": indexed, "removed": len(removed)}
 
     def quarantine(self) -> list[dict[str, str]]:

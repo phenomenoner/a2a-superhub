@@ -7,11 +7,13 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from a2a_superhub.client import HubClientError
+from a2a_superhub.client import HubClient, HubClientError
+from a2a_superhub.server import make_server
 from tools.single_hub_soak import Runtime, Soak, SoakInvariantError, free_port
 
 
@@ -91,6 +93,32 @@ class SingleHubSoakHarnessScenarios(unittest.TestCase):
                 with self.assertRaisesRegex(SoakInvariantError, "operation-timeout:search"):
                     soak.retry(disconnected, label="search")
 
+    def test_connection_retry_survives_a_measured_expected_recovery_window(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            soak = Soak(argparse.Namespace(
+                workspace=str(root / "workspace"), evidence=str(root / "evidence.json"),
+                duration_seconds=2.0, operation_interval=0.4, artifact_interval=1.0,
+                restart_interval=10.0, sample_interval=0.5,
+                max_rss_bytes=536_870_912, max_rss_growth_bytes=134_217_728,
+                max_state_bytes=2_147_483_648, max_pending_outbox=0,
+            ))
+            soak.runtime._expected_outage = True
+            attempts = 0
+
+            def disconnected_once() -> str:
+                nonlocal attempts
+                attempts += 1
+                if attempts == 1:
+                    raise HubClientError("simulated expected restart", kind="connection")
+                return "ready"
+
+            with (
+                patch("tools.single_hub_soak.time.monotonic", side_effect=[0.0, 0.0, 31.0, 32.0]),
+                patch("tools.single_hub_soak.time.sleep"),
+            ):
+                self.assertEqual("ready", soak.retry(disconnected_once, label="search"))
+
     def test_unexpected_child_exit_is_classified_before_connection_deadline(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -159,6 +187,49 @@ class SingleHubSoakHarnessScenarios(unittest.TestCase):
             self.assertEqual(0, result["audit"]["pendingJobs"])
             self.assertEqual(0, result["audit"]["pendingTerminalOutbox"])
             soak.admin.request.assert_not_called()
+
+    def test_delivery_drain_stays_below_rate_limit_when_delivery_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            soak = Soak(argparse.Namespace(
+                workspace=str(root / "workspace"), evidence=str(root / "evidence.json"),
+                duration_seconds=2.0, operation_interval=0.4, artifact_interval=1.0,
+                restart_interval=10.0, sample_interval=0.5,
+                max_rss_bytes=536_870_912, max_rss_growth_bytes=134_217_728,
+                max_state_bytes=2_147_483_648, max_pending_outbox=0,
+            ))
+            principals = {
+                "reader-token": {
+                    "subject": "agent.beta",
+                    "kind": "agent",
+                    "tokenId": "tok_reader_test",
+                    "scopes": ["memory.read"],
+                },
+            }
+            server = make_server(
+                soak.state,
+                host="127.0.0.1",
+                port=free_port(),
+                principals=principals,
+                rate_limit=4,
+                enable_memory=True,
+                enable_delivery=True,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                soak.reader = HubClient(
+                    f"http://127.0.0.1:{server.server_port}",
+                    token="reader-token",
+                    timeout=2,
+                )
+                soak.delivery_note_ids.add("mem_00000000000000000000000000000000")
+                with self.assertRaisesRegex(SoakInvariantError, "delivery-drain-timeout"):
+                    soak.drain_deliveries(timeout=3.2)
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
 
     def test_real_http_load_graceful_restart_controlled_kill_and_final_audit(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

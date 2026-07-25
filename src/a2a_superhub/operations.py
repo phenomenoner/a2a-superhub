@@ -888,7 +888,7 @@ class OperationsDiagnostics:
         if (self.state_dir / "memory" / "notes").exists():
             try:
                 memory = self.memory_service or MemoryService(self.state_dir)
-                index = memory.index_status(include_lag_records=True)
+                index = memory.index_status_snapshot(include_lag_records=True)
             except Exception as exc:
                 index = {"sourceRevision": 0, "indexedRevision": 0, "lagRecords": 0, "degraded": [type(exc).__name__]}
         return {

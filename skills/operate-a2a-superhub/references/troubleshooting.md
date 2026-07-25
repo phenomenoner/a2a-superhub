@@ -7,7 +7,10 @@
    depth, quarantine, retrieval model identity, state bytes, product version, and
    `generatedAt`. Concurrent requests can receive the last completed snapshot
    while one refresh is running; an unchanged timestamp is cached evidence, not
-   proof that current state was freshly collected.
+   proof that current state was freshly collected. Source/index fields describe
+   the last completed convergence snapshot and may remain unchanged during an
+   active filesystem scan; use the final stopped-state audit when exact terminal
+   queue and lag proof is required.
 4. Sanitize tokens, note bodies, private paths, and real user data.
 5. State whether evidence is contract/static, integration, scenario, or soak altitude.
 

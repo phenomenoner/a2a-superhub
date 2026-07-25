@@ -253,13 +253,28 @@ class DurableMemoryTests(unittest.TestCase):
     def test_rebuild_is_derived_and_does_not_mutate_ops_database(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             service = self._service(Path(tmp))
-            service.create_note(self._request(body="rebuild marker"), OWNER, idempotency_key="rebuild")
+            created = service.create_note(
+                self._request(body="rebuild marker"),
+                OWNER,
+                idempotency_key="rebuild",
+            )
+            changed = dict(created.note)
+            changed["body"] = "rebuild marker after external edit"
+            atomic_write(note_path(service.root, changed["id"]), serialize_note(changed))
+            self.assertEqual(
+                1,
+                service.index_status(include_lag_records=True)["lagRecords"],
+            )
             before = service.ops_path.read_bytes()
             count = service.rebuild_index()
             after = service.ops_path.read_bytes()
             self.assertEqual(1, count)
             self.assertEqual(hashlib.sha256(before).digest(), hashlib.sha256(after).digest())
-            self.assertEqual(1, len(service.search("rebuild marker", OWNER)))
+            self.assertEqual(1, len(service.search("external edit", OWNER)))
+            self.assertEqual(
+                0,
+                service.index_status_snapshot(include_lag_records=True)["lagRecords"],
+            )
 
     def test_partial_and_duplicate_paths_are_quarantined(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

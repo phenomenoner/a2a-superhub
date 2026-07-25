@@ -47,6 +47,14 @@ live under `tests/contracts/fixtures/api/`.
 | `POST /v1/memory/task-log/replay` | `memory.admin` | Replay terminal outbox when task-log and intent allowlist are enabled. |
 | `GET /v1/capabilities` | authenticated read | Structured product/schema/protocol/capability manifest. |
 
+Search results authorize and hydrate each returned note from authoritative
+Markdown. The response-level source/index revision fields describe the last
+completed convergence snapshot, so a search does not wait for an unrelated
+filesystem scan that is still in progress. Per-item `sourceRevision` remains
+the authoritative revision for that result. A completed API write advances the
+snapshot immediately; a changed filesystem note appears after its convergence
+cycle completes. This is an eventual-consistency boundary, not a latency claim.
+
 The default runtime leaves the foundation disabled and returns no memory route.
 Install `.[memory-core]` and pass `serve --enable-memory`. Delivery, task-log,
 and watcher writes additionally require `--enable-delivery`, `--enable-task-log`
