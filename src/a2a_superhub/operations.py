@@ -478,6 +478,10 @@ class RetentionManager:
                 (kind, object_id),
             ).fetchone()
 
+    def _relative_state_path(self, path: Path) -> str:
+        resolved = _within(self.state_dir, path)
+        return resolved.relative_to(self.state_dir).as_posix()
+
     def _prepare_tombstone(self, *, kind: str, object_id: str, original: Path, trash: Path, digest: str, metadata: dict[str, Any]) -> None:
         with self._connect() as connection:
             connection.execute(
@@ -490,8 +494,8 @@ class RetentionManager:
                 """,
                 (
                     kind, object_id,
-                    original.relative_to(self.state_dir).as_posix(),
-                    trash.relative_to(self.state_dir).as_posix(),
+                    self._relative_state_path(original),
+                    self._relative_state_path(trash),
                     digest, json.dumps(metadata, sort_keys=True), _now(),
                 ),
             )

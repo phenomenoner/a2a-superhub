@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
 import tempfile
 import threading
 import unittest
@@ -314,6 +315,47 @@ class OperationalReadinessScenarios(unittest.TestCase):
             recovered_restore = retention.restore("memory-note", note["id"], ADMIN)
             self.assertTrue(recovered_restore["idempotent"])
             self.assertEqual("recover transition", MemoryService(state).read_note(note["id"], ADMIN)["body"])
+
+    def test_retention_normalizes_an_equivalent_state_path_alias(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state = root / "state"
+            memory = MemoryService(state)
+            note = memory.create_note({
+                "type": "observation", "title": "alias", "visibility": "shared",
+                "body": "canonical relative tombstone",
+            }, OWNER, idempotency_key="retention-alias").note
+            memory.init()
+            alias = root / "state-alias"
+            try:
+                os.symlink(state, alias, target_is_directory=True)
+            except OSError as exc:
+                self.skipTest(f"directory link unavailable: {exc}")
+            original = memory._authoritative_catalog[note["id"]]
+            trash = alias / "trash" / "memory" / note["id"] / "note.md"
+            trash.parent.mkdir(parents=True)
+            retention = RetentionManager(state)
+            retention._init()
+            retention._prepare_tombstone(
+                kind="memory-note",
+                object_id=note["id"],
+                original=original,
+                trash=trash,
+                digest=hashlib.sha256(original.read_bytes()).hexdigest(),
+                metadata={"visibility": "shared"},
+            )
+            row = retention._tombstone("memory-note", note["id"])
+            self.assertEqual(f"trash/memory/{note['id']}/note.md", row["trash_path"])
+
+    def test_retention_relative_paths_still_reject_state_escape(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            state = root / "state"
+            state.mkdir()
+            outside = root / "outside.md"
+            outside.write_text("outside", encoding="utf-8")
+            with self.assertRaisesRegex(OperationsError, "escapes the state root"):
+                RetentionManager(state)._relative_state_path(outside)
 
     def test_backup_excludes_active_runtime_and_diagnostics_are_payload_free(self):
         with tempfile.TemporaryDirectory() as temporary:
