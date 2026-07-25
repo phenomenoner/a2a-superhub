@@ -14,7 +14,8 @@
 
 **[Product site](https://phenomenoner.github.io/a2a-superhub/)** ·
 **[Shared memory design and implemented surfaces](docs/DESIGN.md)** ·
-[API](docs/API.md) · [Operations](docs/OPERATIONS.md) · [Adapters](docs/ADAPTERS.md) · [Security](docs/SECURITY.md)
+[Local agent operations](docs/LOCAL_AGENT_OPERATIONS.md) · [API](docs/API.md) ·
+[Operations](docs/OPERATIONS.md) · [Adapters](docs/ADAPTERS.md) · [Security](docs/SECURITY.md)
 
 ---
 
@@ -118,6 +119,9 @@ Full API reference in [docs/API.md](docs/API.md). Adapter contract in
 [docs/MCP_AGENT_INTEGRATION.md](docs/MCP_AGENT_INTEGRATION.md).
 Artifact transport, derivation, trust labels, and rollback behavior are in
 [docs/ARTIFACTS_AND_DERIVATION.md](docs/ARTIFACTS_AND_DERIVATION.md).
+For an authenticated loopback hub with separate agent identities, a packaged
+Skill, secret-safe MCP host configuration, and an authorized cross-agent smoke
+flow, follow [Run a local hub for agent use](docs/LOCAL_AGENT_OPERATIONS.md).
 
 ### Connect an MCP client
 
@@ -170,7 +174,8 @@ operational-readiness claim. The short version:
 - **MCP sidecar + reference adapter + operator Skill** — ten stable tools and
   two `memory://` resources reuse the HTTP authorization boundary; a removable client adapter negotiates
   identity/capabilities, inserts only delimited untrusted data, and acks only
-  after delivery. The packaged Skill provides doctor/smoke/install workflows.
+  after delivery. The packaged Skill provides private local bootstrap,
+  identity-bound MCP launch, doctor, smoke, and install workflows.
 - **Searchable artifact text** — when explicitly enabled, bounded PDF extraction
   and image OCR create a clearly labeled untrusted Markdown note. Every read and
   search result is re-authorized against the current source artifact manifest;

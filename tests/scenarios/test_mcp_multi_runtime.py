@@ -23,6 +23,7 @@ from a2a_superhub.server import make_server
 
 
 ROOT = Path(__file__).resolve().parents[2]
+LAUNCH_MCP = ROOT / "skills" / "operate-a2a-superhub" / "scripts" / "launch_mcp.py"
 PRINCIPALS = {
     "alpha-token": {
         "subject": "agent.alpha",
@@ -74,8 +75,63 @@ async def open_mcp(base_url: str, token: str, message_handler=None):
             yield session, initialized
 
 
+@asynccontextmanager
+async def open_profile_mcp(base_url: str, token: str, subject: str):
+    with tempfile.TemporaryDirectory() as tmp:
+        profile = Path(tmp) / "connection.json"
+        profile.write_text(
+            json.dumps(
+                {
+                    "schema": "a2a-superhub.connection.v1",
+                    "subject": subject,
+                    "token": token,
+                    "url": base_url,
+                }
+            ),
+            encoding="utf-8",
+        )
+        params = StdioServerParameters(
+            command=sys.executable,
+            args=[str(LAUNCH_MCP)],
+            cwd=str(ROOT),
+            env={
+                "PYTHONPATH": str(ROOT / "src"),
+                "A2A_SUPERHUB_CONNECTION_FILE": str(profile),
+            },
+        )
+        async with stdio_client(params) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                initialized = await session.initialize()
+                yield session, initialized
+
+
 @unittest.skipIf(ClientSession is None, "install the mcp extra for stdio scenarios")
 class McpMultiRuntimeScenarios(unittest.IsolatedAsyncioTestCase):
+    async def test_private_profile_launcher_negotiates_expected_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            token = "profile-alpha-token-for-stdio"
+            server = make_server(
+                tmp,
+                port=0,
+                enable_memory=True,
+                enable_delivery=True,
+                principals={token: PRINCIPALS["alpha-token"]},
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            base = f"http://127.0.0.1:{server.server_port}"
+            try:
+                async with open_profile_mcp(base, token, "agent.alpha") as (session, initialized):
+                    self.assertEqual("2025-11-25", initialized.protocolVersion)
+                    listed = await session.list_tools()
+                    self.assertEqual(10, len(listed.tools))
+                    searched = await session.call_tool("memory_search", {"query": "profile launcher"})
+                    self.assertFalse(searched.isError)
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
     async def test_real_stdio_lifecycle_tools_resources_and_hub_auth_denial(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             server, thread = start_hub(tmp)

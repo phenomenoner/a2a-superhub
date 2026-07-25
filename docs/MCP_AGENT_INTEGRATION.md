@@ -25,6 +25,14 @@ Run the HTTP hub with memory enabled, then configure an MCP client to launch
 Multiple sidecars can connect to the same hub. Restarting or removing a sidecar
 does not alter hub state.
 
+For a complete loopback setup with separate agent principals, use
+[Run a local hub for agent use](LOCAL_AGENT_OPERATIONS.md). Its packaged
+`bootstrap_local.py` helper creates private per-agent connection profiles
+without printing tokens. `launch_mcp.py` reads one profile, verifies the
+authenticated subject and current memory capability, and then starts the stdio
+sidecar. This keeps the bearer token out of MCP command arguments and public
+configuration; the profile itself remains a secret file.
+
 ## Tool surface
 
 | Tool | Effect |

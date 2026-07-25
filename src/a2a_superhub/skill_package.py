@@ -21,7 +21,9 @@ SKILL_PAYLOAD = (
     "references/security-and-approval.md",
     "references/troubleshooting.md",
     "references/workflows.md",
+    "scripts/bootstrap_local.py",
     "scripts/doctor.py",
+    "scripts/launch_mcp.py",
     "scripts/smoke.py",
 )
 
@@ -79,7 +81,9 @@ def validate_skill(root: str | Path | None = None) -> dict[str, Any]:
         "SKILL.md",
         "agents/openai.yaml",
         "references/compatibility.json",
+        "scripts/bootstrap_local.py",
         "scripts/doctor.py",
+        "scripts/launch_mcp.py",
         "scripts/smoke.py",
     ]
     missing = [relative for relative in required if not (path / relative).is_file()]

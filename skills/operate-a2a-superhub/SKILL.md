@@ -26,11 +26,24 @@ closed unless MCP initializes. Run `scripts/smoke.py --json` against disposable 
 existing target requires both `--url` and `--allow-write` plus sender/receiver
 token environment handles.
 
+For an approved new loopback deployment, `scripts/bootstrap_local.py` creates a
+private principal registry plus separate agent/operator connection profiles and
+refuses to overwrite credentials. It never prints bearer tokens.
+`scripts/launch_mcp.py` reads one private profile, verifies that the hub
+authenticates the expected subject with the current memory surface, and only
+then starts the MCP stdio sidecar. Read
+[the local connection workflow](references/workflows.md#local-agent-connection)
+before using either script.
+
 ## Choose a transport
 
 - Prefer CLI for local initialization, configuration, and future operator workflows.
 - Prefer MCP for agent operations only after initialize negotiation confirms
   protocol `2025-11-25`, the required tools, and any resource capability in use.
+- Prefer a private connection profile and `scripts/launch_mcp.py` when an MCP
+  host cannot inject a secret through an appropriate credential store. The
+  profile is itself a bearer credential and must never be published or shared
+  between agents.
 - If resource subscriptions are not advertised, poll `resources/read`; this is
   a refresh fallback, not permission to bypass hub authorization.
 - Use HTTP as the semantic fallback for deterministic automation.

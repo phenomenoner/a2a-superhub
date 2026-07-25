@@ -16,7 +16,9 @@ SKILL_FILES = (
     "references/security-and-approval.md",
     "references/troubleshooting.md",
     "references/workflows.md",
+    "scripts/bootstrap_local.py",
     "scripts/doctor.py",
+    "scripts/launch_mcp.py",
     "scripts/smoke.py",
 )
 

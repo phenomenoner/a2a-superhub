@@ -2,6 +2,10 @@
 
 - Obtain author, acting subject, and scopes only from server authentication.
 - Never print token material or include it in receipts, fixtures, commands, or errors.
+- Treat each local connection profile as a bearer credential. Store it under a
+  private absolute path, do not link it through another location, do not place
+  it in a repository or synchronized/public directory, and do not reuse it for
+  a different agent subject.
 - Treat private/direct visibility as a final-authorization requirement on every read surface.
 - Treat candidate search filters as optimization, not authorization.
 - Re-authorize every derived note against the current source artifact manifest;
