@@ -25,7 +25,7 @@ It defines the design tokens, voice, status ladder, truth hierarchy, and the
 ## Verify
 
 ```bash
-python -m unittest discover -s tests    # core suite
+python -m unittest discover -s tests    # core suite; release/version development only — skip for docs/site-only changes
 python -m http.server 8899 --directory docs   # site QA (guide §7C)
 ```
 
