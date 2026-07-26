@@ -2836,7 +2836,8 @@ class MemoryWatcher:
         self.service = service
         self.clock = clock
         self.debounce_seconds = max(0.0, debounce_seconds)
-        self._pending: dict[str, float] = {}
+        self._pending: dict[str, tuple[float, int]] = {}
+        self._next_generation = 0
         self._lock = threading.Lock()
 
     @property
@@ -2853,7 +2854,8 @@ class MemoryWatcher:
                 if candidate is None:
                     continue
                 raw = unicodedata.normalize("NFC", str(candidate)).replace("\\", "/").casefold()
-                self._pending[raw] = due
+                self._next_generation += 1
+                self._pending[raw] = (due, self._next_generation)
 
     def on_any_event(self, event: Any) -> None:
         if getattr(event, "is_directory", False):
@@ -2868,16 +2870,16 @@ class MemoryWatcher:
         now = self.clock()
         with self._lock:
             ready = {
-                key: due
-                for key, due in self._pending.items()
-                if force or due <= now
+                key: pending
+                for key, pending in self._pending.items()
+                if force or pending[0] <= now
             }
         if not ready:
             return None
         result = self.service.sync_filesystem()
         with self._lock:
-            for key, due in ready.items():
-                if self._pending.get(key) == due:
+            for key, pending in ready.items():
+                if self._pending.get(key) == pending:
                     self._pending.pop(key, None)
         return result
 

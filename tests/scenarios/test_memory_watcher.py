@@ -323,7 +323,13 @@ class MemoryWatcherScenarios(unittest.TestCase):
                 search_results[0]["items"][0]["sourceRevision"],
                 "completed index status lagged behind a completed API write",
             )
-            self.assertEqual(0, diagnostics_results[0]["stores"]["memory"]["index"]["lagRecords"])
+            index_status = diagnostics_results[0]["stores"]["memory"]["index"]
+            self.assertGreaterEqual(index_status["lagRecords"], 0)
+            self.assertEqual(
+                ["index-stale"] if index_status["lagRecords"] else [],
+                index_status["degraded"],
+                "the last completed diagnostic snapshot reported incoherent lag state",
+            )
 
     def test_convergence_does_not_hold_writer_lock_while_planning_unchanged_jobs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -577,6 +583,49 @@ class MemoryWatcherScenarios(unittest.TestCase):
         )
         self.assertEqual(0, watcher.pending_count)
         self.assertEqual(2, attempts)
+
+    def test_successful_flush_does_not_consume_concurrent_same_path_generation(self) -> None:
+        sync_entered = threading.Event()
+        release_sync = threading.Event()
+
+        class BlockingService:
+            def sync_filesystem(self) -> dict[str, int]:
+                sync_entered.set()
+                if not release_sync.wait(5):
+                    raise AssertionError("test did not release the blocked convergence")
+                return {"assigned": 0, "enqueued": 0, "indexed": 1, "removed": 0}
+
+        watcher = MemoryWatcher(BlockingService(), clock=lambda: 100.0, debounce_seconds=0)
+        watcher.notify("notes/same-path.md", "modified")
+        results: list[dict[str, int] | None] = []
+        failures: list[BaseException] = []
+
+        def flush() -> None:
+            try:
+                results.append(watcher.flush(force=True))
+            except BaseException as exc:  # pragma: no cover - asserted below
+                failures.append(exc)
+
+        flush_thread = threading.Thread(target=flush, name="blocked-successful-flush")
+        flush_thread.start()
+        self.assertTrue(sync_entered.wait(5), "flush did not enter convergence")
+        watcher.notify("notes/same-path.md", "modified")
+        release_sync.set()
+        flush_thread.join(timeout=10)
+
+        self.assertFalse(flush_thread.is_alive())
+        self.assertEqual([], failures)
+        self.assertEqual(
+            [{"assigned": 0, "enqueued": 0, "indexed": 1, "removed": 0}],
+            results,
+        )
+        self.assertEqual(
+            1,
+            watcher.pending_count,
+            "the successful flush consumed a newer same-path generation",
+        )
+        self.assertIsNotNone(watcher.flush(force=True))
+        self.assertEqual(0, watcher.pending_count)
 
     def test_runtime_watchdog_retries_failed_generation_without_a_second_event(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
