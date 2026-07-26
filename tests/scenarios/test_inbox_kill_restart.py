@@ -48,7 +48,9 @@ class InboxKillRestartScenarios(unittest.TestCase):
                 OWNER, idempotency_key="delivery-kill",
             )
             self.assertFalse(replay.inserted)
-            self.assertEqual(2, len(service.list_deliveries()))  # direct + handoff reasons, stable logical deliveries
+            deliveries = service.list_deliveries()
+            self.assertEqual(1, len(deliveries))
+            self.assertEqual(["direct", "handoff"], deliveries[0]["reasons"])
             phases = {item["phase"] for item in service.list_receipts(trace_id=replay.trace_id)}
             self.assertEqual({"write", "index", "delivery"}, phases)
 

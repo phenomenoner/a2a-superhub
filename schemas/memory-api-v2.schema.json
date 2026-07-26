@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://phenomenoner.github.io/a2a-superhub/schemas/memory-api-v2.schema.json",
+  "title": "A2A Superhub memory sharing API v2 contract",
+  "description": "Versioned logical-delivery, inbox-only ACK, bounded wakeup-preview, typed-target, error, and lifecycle shapes. Stored notes continue to use the immutable memory note v1 schema.",
+  "$defs": {
+    "deliveryReason": {
+      "enum": ["about", "direct", "handoff"]
+    },
+    "typedRelationTarget": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 256,
+      "pattern": "^(agent|note|project|task|event|artifact):.+$"
+    },
+    "createNoteRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "title", "visibility", "body"],
+      "properties": {
+        "type": {
+          "enum": ["note", "decision", "handoff", "observation", "task-log", "profile"]
+        },
+        "title": {"type": "string", "minLength": 1, "maxLength": 256},
+        "visibility": {"type": "string"},
+        "occurredAt": {"type": "string", "format": "date-time"},
+        "project": {"type": "string", "minLength": 1, "maxLength": 128},
+        "participants": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"type": "string"}},
+        "about": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"type": "string"}},
+        "tags": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"type": "string"}},
+        "supersedes": {"type": "string", "pattern": "^mem_[0-9a-f]{32}$"},
+        "relations": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "target"],
+            "properties": {
+              "type": {"type": "string"},
+              "target": {"$ref": "#/$defs/typedRelationTarget"}
+            }
+          }
+        },
+        "body": {"type": "string", "maxLength": 262144}
+      }
+    },
+    "logicalInboxItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deliveryId", "reasons", "note", "provenance"],
+      "properties": {
+        "deliveryId": {"type": "string", "pattern": "^del_[0-9a-f]{64}$"},
+        "reasons": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/deliveryReason"}
+        },
+        "note": {"$ref": "memory-api-v1.schema.json#/$defs/memoryNote"},
+        "provenance": {"$ref": "memory-api-v1.schema.json#/$defs/provenance"}
+      }
+    },
+    "inboxPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["consumerId", "items", "cursor", "hasMore"],
+      "properties": {
+        "consumerId": {"type": "string"},
+        "items": {"type": "array", "items": {"$ref": "#/$defs/logicalInboxItem"}},
+        "cursor": {"type": "string", "minLength": 16, "maxLength": 4096},
+        "hasMore": {"type": "boolean"}
+      }
+    },
+    "wakeupTruncation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reasons", "sections", "nextAction"],
+      "properties": {
+        "reasons": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"enum": ["byte-budget", "item-limit"]}
+        },
+        "sections": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["profile", "inbox", "recent", "activeTasks"],
+          "properties": {
+            "profile": {"$ref": "#/$defs/sectionOmission"},
+            "inbox": {"$ref": "#/$defs/sectionOmission"},
+            "recent": {"$ref": "#/$defs/sectionOmission"},
+            "activeTasks": {"$ref": "#/$defs/sectionOmission"}
+          }
+        },
+        "nextAction": {"type": ["string", "null"], "enum": ["read-inbox", null]}
+      }
+    },
+    "sectionOmission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["included", "hasMore"],
+      "properties": {
+        "included": {"type": "integer", "minimum": 0},
+        "hasMore": {"type": "boolean"}
+      }
+    },
+    "validationDetails": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fieldPath", "rule"],
+      "properties": {
+        "fieldPath": {"type": "string", "maxLength": 128},
+        "rule": {"type": "string", "maxLength": 64},
+        "allowedValues": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {"type": "string", "maxLength": 128}
+        },
+        "expected": {"type": "string", "maxLength": 128}
+      }
+    },
+    "errorResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["error", "traceId"],
+      "properties": {
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message", "retryable"],
+          "properties": {
+            "code": {"type": "string"},
+            "message": {"type": "string"},
+            "retryable": {"type": "boolean"},
+            "details": {"$ref": "#/$defs/validationDetails"}
+          }
+        },
+        "traceId": {"type": "string", "pattern": "^trace_[0-9a-f]{32}$"}
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "noteId", "facts"],
+      "properties": {
+        "schema": {"const": "a2a-superhub.memory.lifecycle.v1"},
+        "noteId": {"type": "string", "pattern": "^mem_[0-9a-f]{32}$"},
+        "facts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["stored", "indexed", "deliveries", "linkedReferences"],
+          "properties": {
+            "stored": {"type": "object"},
+            "indexed": {"type": ["object", "null"]},
+            "deliveries": {"type": "array", "items": {"type": "object"}},
+            "linkedReferences": {"type": "array", "items": {"type": "object"}}
+          }
+        }
+      }
+    }
+  }
+}

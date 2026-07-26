@@ -105,6 +105,46 @@ Stop the foreground process with `Ctrl+C`. The hub holds an exclusive state
 lease while running, so offline backup, restore, retention, and search-migration
 commands correctly refuse to run against the active state.
 
+### Start it again after a Windows reboot
+
+A system reboot stops the process but does not remove the initialized state,
+principal registry, or per-agent connection profiles. Do not run
+`bootstrap_local.py` again. Reuse the exact existing private runtime root and
+the same server flags:
+
+```powershell
+$Repo = Resolve-Path "<path-to-a2a-superhub-checkout>"
+$Python = (Resolve-Path (Join-Path $Repo ".venv\Scripts\python.exe")).Path
+$RuntimeRoot = Join-Path $env:LOCALAPPDATA "A2ASuperhub\local"
+$State = Join-Path $RuntimeRoot "state"
+$Principals = Join-Path $RuntimeRoot "principals.json"
+
+Push-Location $Repo
+try {
+  & $Python -m a2a_superhub --state $State serve `
+    --host 127.0.0.1 `
+    --port 8787 `
+    --principals $Principals `
+    --enable-memory `
+    --enable-delivery `
+    --enable-task-log `
+    --task-log-intent agent.query `
+    --task-log-intent agent.handoff `
+    --enable-derivers `
+    --search-mode keyword
+} finally {
+  Pop-Location
+}
+```
+
+This is a normal PowerShell command. Keep that terminal open; `Ctrl+C` stops the
+hub cleanly. If the original deployment used a different private runtime root,
+substitute that exact root rather than creating a new one.
+
+After startup, repeat the identity-bound `launch_mcp.py --check --json` and MCP
+doctor checks below. Existing MCP host configuration and connection profiles do
+not need to be recreated.
+
 ## 4. Verify identity, MCP, and a real cross-agent flow
 
 In another terminal, resolve the scripts and load a connection profile without
@@ -214,6 +254,8 @@ sidecar does not delete hub state.
 
 ## 7. Agent handoff text
 
+For a complete ordinary-agent workflow with exact calls, effects, and failure
+behavior, use [Agent guide: use A2A Superhub through MCP](AGENT_USER_GUIDE.md).
 Give an agent this concise instruction together with its configured MCP server:
 
 > Use the `operate-a2a-superhub` Skill and the configured A2A Superhub MCP

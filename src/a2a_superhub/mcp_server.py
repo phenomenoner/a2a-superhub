@@ -23,7 +23,7 @@ from .client import HubClient, HubClientError
 
 
 PROTOCOL_VERSION = "2025-11-25"
-SERVER_VERSION = "0.2.0"
+SERVER_VERSION = "0.3.0"
 _RESOURCE_PART = re.compile(r"[A-Za-z0-9._:-]{1,200}")
 
 
@@ -93,8 +93,10 @@ def tool_definitions() -> list[types.Tool]:
         ),
         types.Tool(
             name="memory_read",
-            description="Read one currently authorized memory note.",
-            inputSchema=_object_schema({"id": text}, ["id"]),
+            description="Read one currently authorized memory note, optionally with its authorized operational lifecycle facts.",
+            inputSchema=_object_schema(
+                {"id": text, "includeLifecycle": {"type": "boolean"}}, ["id"]
+            ),
             outputSchema=output,
             annotations=_annotations(read_only=True, idempotent=True),
         ),
@@ -312,7 +314,13 @@ def build_server(base_url: str, token: str | None) -> tuple[SubscribableServer, 
                     )
                 )
             if name == "memory_read":
-                return await run_http(partial(client.read_note, str(args["id"])))
+                return await run_http(
+                    partial(
+                        client.read_note,
+                        str(args["id"]),
+                        include_lifecycle=bool(args.get("includeLifecycle", False)),
+                    )
+                )
             if name == "memory_timeline":
                 return await run_http(
                     partial(
@@ -346,7 +354,15 @@ def build_server(base_url: str, token: str | None) -> tuple[SubscribableServer, 
                 return await run_http(partial(client.task_status, str(args["taskId"])))
             raise ValueError("unknown MCP tool")
         except HubClientError as exc:
-            error = {"kind": exc.kind, "status": exc.status, "code": exc.code, "message": str(exc)}
+            error = {
+                "kind": exc.kind,
+                "status": exc.status,
+                "code": exc.code,
+                "message": str(exc),
+                "retryable": exc.retryable,
+                "details": exc.details,
+                "traceId": exc.trace_id,
+            }
             return types.CallToolResult(
                 content=[types.TextContent(type="text", text=json.dumps({"error": error}, separators=(",", ":")))],
                 structuredContent={"error": error},

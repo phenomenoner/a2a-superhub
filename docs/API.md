@@ -4,9 +4,12 @@ A2A Superhub exposes a compact JSON API plus a minimal JSON-RPC A2A facade.
 
 This file documents the coordination runtime and opt-in durable-memory,
 offline-sharing, hybrid-retrieval, and optional artifact-text derivation foundations.
-The complete memory.v1 contract is in [MEMORY_API.md](MEMORY_API.md). Inbox,
-wakeup, task-log sedimentation, the reference adapter, operator Skill, and MCP
-stdio sidecar are implemented. An A2A 1.0 runtime binding remains absent.
+Memory v2 is the current agent-facing contract; the complete route and payload
+contract is in [MEMORY_API.md](MEMORY_API.md). The delivery migration,
+compatibility window, and rollback boundary are in
+[MEMORY_V2_COMPATIBILITY.md](MEMORY_V2_COMPATIBILITY.md). Inbox, wakeup,
+task-log sedimentation, the reference adapter, operator Skill, and MCP stdio
+sidecar are implemented. An A2A 1.0 runtime binding remains absent.
 
 ## Public endpoints
 
@@ -18,8 +21,8 @@ These endpoints are available without bearer auth:
 
 ## Authenticated endpoints
 
-If `--token` or `A2A_SUPERHUB_TOKEN` is configured, all `/v1/*` and `/a2a`
-requests require `Authorization: Bearer <token>`.
+If `--token` or `A2A_SUPERHUB_TOKEN` is configured, all `/v1/*`, `/v2/*`, and
+`/a2a` requests require `Authorization: Bearer <token>`.
 
 Non-loopback binds fail at startup unless a legacy token or static principal
 registry is configured. Loopback no-token mode resolves to `local.operator`.
@@ -27,23 +30,45 @@ registry is configured. Loopback no-token mode resolves to `local.operator`.
 ## Opt-in memory and retrieval foundation
 
 Install `.[memory-core]` and run `serve --enable-memory`. The default remains
-off, so existing v1 deployments preserve their behavior.
+off. New agents should negotiate `GET /v2/capabilities` and use `/v2/memory/*`.
+Version 0.3.x also writes and serves the v1 per-reason delivery projection so
+existing v1 consumers continue to work during the documented compatibility
+window.
 
-- `POST /v1/memory/notes` creates an immutable Markdown note. Supply a 1–128
+- `POST /v2/memory/notes` creates an immutable Markdown note. Supply a 1–128
   character idempotency key in `Idempotency-Key` or `idempotencyKey`; author,
-  source, and recorded time are server-derived.
-- `GET /v1/memory/notes/<id>` reads only after final authorization against the
-  current Markdown frontmatter.
-- `GET /v1/memory/notes?limit=...` lists authorized note summaries.
-- `GET /v1/memory/search?q=...&limit=...&mode=auto|hybrid|keyword` performs
+  source, and recorded time are server-derived. Relation targets must use
+  `agent:`, `note:`, `project:`, `task:`, `event:`, or `artifact:`.
+- `GET /v2/memory/notes/<id>` reads only after final authorization against the
+  current Markdown frontmatter. Add `includeLifecycle=true`, or request
+  `/v2/memory/notes/<id>/lifecycle`, for authorized operational facts.
+- `GET /v2/memory/notes?limit=...` lists authorized note summaries.
+- `GET /v2/memory/search?q=...&limit=...&mode=auto|hybrid|keyword` performs
   authorized hybrid retrieval when configured and retains FTS-compatible
   keyword fallback.
-- `GET /v1/capabilities` reports `memoryFoundation` separately from the still
-  false full-memory capability.
+- `GET /v2/capabilities` reports the `logical.v2` delivery model,
+  `ackCursorSource: inbox-only`, `wakeupAckMode: none`, lifecycle availability,
+  and granular runtime features. `memoryFull` remains false.
+
+One v2 inbox item represents one logical delivery identified by note and
+recipient. If several routing rules match, the item contains the complete
+bounded `reasons` array (`about`, `direct`, and/or `handoff`) instead of
+duplicating the content. Within v2, only `/v2/memory/inbox` issues an
+acknowledgeable cursor, recorded with the exact delivery IDs returned on that
+page. Wakeup is a bounded untrusted preview: it never returns a cursor and
+never authorizes an ACK. Acknowledge an inbox cursor only after that exact page
+was accepted by the intended consumer.
+
+Lifecycle output is an authorization-filtered set of stored, indexed, queued,
+acknowledged, and linked-reference facts. It is not a linear state and does not
+claim that another agent understood or executed the note.
 
 The same opt-in runtime provides durable multi-consumer inbox fetch/ack, safe
 wakeup, timeline/graph, sanitized stats/receipts, and allowlisted task-log
-replay. See [MEMORY_API.md](MEMORY_API.md) for their scopes and schemas.
+replay. Errors use a typed safe envelope with `code`, `message`, `retryable`,
+optional bounded validation `details`, and `traceId`; the HTTP client and MCP
+sidecar preserve these fields. See [MEMORY_API.md](MEMORY_API.md) for scopes,
+schemas, and compatibility behavior.
 
 CLI support covers note create/read, reindex, inbox fetch/ack, wakeup,
 timeline/graph, and stats. The separate `skill` commands expose path,
@@ -77,6 +102,11 @@ and delegates every operation to these HTTP endpoints. It exposes ten tools:
 `memory_write`, `memory_search`, `memory_read`, `memory_timeline`,
 `memory_graph`, `memory_wakeup`, `memory_inbox`, `memory_inbox_ack`,
 `task_create`, and `task_status`.
+
+The sidecar uses memory v2. `memory_read` accepts `includeLifecycle`; inbox
+items use logical deliveries and reason arrays; `memory_wakeup` remains a
+cursor-free preview; and `memory_inbox_ack` accepts only a cursor issued by
+`memory_inbox`.
 
 `memory://note/{id}` and `memory://wakeup/{agent}` are authorized JSON resources.
 The sidecar advertises resource subscriptions and emits updated notifications

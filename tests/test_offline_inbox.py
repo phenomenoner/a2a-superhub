@@ -50,16 +50,18 @@ class OfflineInboxTests(unittest.TestCase):
 
             self.assertFalse(replay.inserted)
             deliveries = service.list_deliveries()
-            identities = {(item["noteId"], item["recipient"], item["reason"]) for item in deliveries}
+            identities = {
+                (item["noteId"], item["recipient"], tuple(item["reasons"]))
+                for item in deliveries
+            }
             self.assertEqual(
                 {
-                    (created.note["id"], "agent.beta", "direct"),
-                    (created.note["id"], "agent.beta", "handoff"),
-                    (created.note["id"], "agent.gamma", "about"),
+                    (created.note["id"], "agent.beta", ("direct", "handoff")),
+                    (created.note["id"], "agent.gamma", ("about",)),
                 },
                 identities,
             )
-            self.assertEqual(3, len(deliveries))
+            self.assertEqual(2, len(deliveries))
 
     def test_fetch_does_not_ack_and_two_consumers_are_restart_independent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -144,8 +146,23 @@ class OfflineInboxTests(unittest.TestCase):
             fetched = service.fetch_inbox(BETA, "desktop.a")
 
             self.assertEqual(["visible"], [item["note"]["title"] for item in fetched["items"]])
+            delivered_ids = {
+                item["deliveryId"] for item in fetched["items"]
+            }
             service.acknowledge_inbox(BETA, "desktop.a", fetched["cursor"])
             self.assertEqual([], service.fetch_inbox(BETA, "desktop.a")["items"])
+            with service._connect(service.ops_path) as connection:
+                acknowledged_ids = {
+                    row["delivery_id"]
+                    for row in connection.execute(
+                        """
+                        SELECT delivery_id FROM logical_ack_receipts
+                        WHERE principal=? AND consumer_id=?
+                        """,
+                        (BETA.subject, "desktop.a"),
+                    )
+                }
+            self.assertEqual(delivered_ids, acknowledged_ids)
 
     def test_delivery_feature_off_preserves_notes_and_resume_backfills(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

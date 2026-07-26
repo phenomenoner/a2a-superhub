@@ -16,8 +16,8 @@ Breaking these contracts requires an explicit API, schema, or capability version
 | Operational durability | SQLite is the authoritative operational store. JSONL is export/debug output, never the sole cursor or acknowledgement record. | Do not expose inbox or acknowledgement operations without the durable store. |
 | Task-log sedimentation | Automatic task-log notes are allowlist-only and structured by default. Raw excerpts require explicit policy. | Leave automatic sedimentation disabled. |
 | Supersede authority | Only the original author or `memory.admin` may supersede an assertion. Other authors use `disputes` or `updates`. | Disable supersede mutation while retaining non-destructive relations. |
-| Consumer cursor | Opaque cursors bind principal, consumer ID, and delivery sequence. Acknowledgement is monotonic and idempotent. | Advertise single-consumer support instead of implying multi-device semantics. |
-| Wakeup safety | Wakeup returns a bounded `role=data`, `trust=untrusted-memory` envelope. Adapters and Skills must never elevate memory text to system instructions. | Disable wakeup and require explicit reads. |
+| Consumer cursor | Opaque inbox cursors bind principal, consumer ID, logical delivery model, and the exact fetched page membership. Acknowledgement is monotonic, idempotent, and cannot claim an unfetched logical delivery. | Reject unknown or legacy cursors that could advance state and require the consumer to fetch a fresh inbox page. |
+| Wakeup safety | Wakeup returns a bounded `role=data`, `trust=untrusted-memory` preview without an acknowledgement cursor. Adapters and Skills must never elevate memory text to system instructions or acknowledge from wakeup. | Disable wakeup and require explicit inbox reads. |
 | Embedding selection | A multilingual embedding model is accepted only after a fixed-corpus quality, license, CPU, memory, and latency evaluation. The selected model source, revision, license, dimension, and tokenizer/config bytes are pinned and verified at runtime. | Retain keyword-only FTS search. |
 | Skill compatibility | The operator Skill negotiates the machine-readable API/schema/auth/capability surface before acting and ships with the same product version. | Stop at read-only discovery on mismatch. |
 | Multi-consumer behavior | `consumerId` is part of the public contract. Any single-consumer fallback must be reported as a capability, never silently substituted. | Advertise the narrower behavior explicitly. |
@@ -35,6 +35,27 @@ Breaking these contracts requires an explicit API, schema, or capability version
 | Skill distribution | `skills/operate-a2a-superhub/` ships with source and wheel artifacts and is checked for contract drift. | Block distribution if the Skill and product surface diverge. |
 | Private backup | Memory is never git-pushed automatically. Backup defaults to local/encrypted destinations; public targets require explicit opt-in. | Disable product-managed backup. |
 | Federation | Hub-to-hub federation remains disabled until same-operator trust, namespaced identities, and operational evidence exist. | Keep hubs isolated. |
+
+## Memory delivery and lifecycle contract
+
+The `/v2/memory` surface treats one `(noteId, recipient)` pair as one logical
+delivery. All matching reasons remain inspectable metadata; they are not
+separate work items. The `/v1` compatibility representation may expose those
+reasons as separate rows throughout the 0.3.x line, but its rows share the same
+logical acknowledgement boundary. Partial retrieval of those rows must not
+acknowledge the logical delivery.
+
+Lifecycle output reports independent facts—visibility, routing, fetched-page
+membership, acknowledgement, retention, quarantine, supersession, and
+derivation—rather than inventing a linear state machine. Access requires either
+normal note-read authority or administrative authority for facts that cannot be
+safely correlated to an author. Typed relation targets use the declared
+`agent`, `note`, `project`, `task`, `event`, and `artifact` namespaces. Unknown
+types and invalid bodies return bounded machine-readable details without raw
+exception text or local paths.
+
+The complete compatibility and operational recovery rules are documented in
+[MEMORY_V2_COMPATIBILITY.md](MEMORY_V2_COMPATIBILITY.md).
 
 Ratification record: **APPROVED** on 2026-07-19. The executable contract is
 the current schemas, tests, source, and agent-surface fingerprint; this prose is

@@ -19,7 +19,7 @@
       "additionalProperties": false,
       "required": ["schema", "memoryFoundation", "memorySharing", "timelineGraph", "safeWakeup", "taskLog", "watcherSideEffects", "runtimeWatcher", "adapter", "memoryFull", "memorySearch", "artifactUploads", "a2aPartMapping", "maxArtifactBytes", "artifactDerivation", "derivedTextTrust", "operationalDiagnostics", "offlineAuthoritativeBackup", "recoverableRetention", "retrieval", "principal"],
       "properties": {
-        "schema": {"const": "a2a-superhub.capabilities.v1"},
+        "schema": {"enum": ["a2a-superhub.capabilities.v1", "a2a-superhub.capabilities.v2"]},
         "memoryFoundation": {"type": "boolean"},
         "memorySharing": {"type": "boolean"},
         "timelineGraph": {"type": "boolean"},
@@ -46,6 +46,11 @@
         "operationalDiagnostics": {"type": "boolean"},
         "offlineAuthoritativeBackup": {"type": "boolean"},
         "recoverableRetention": {"type": "boolean"},
+        "memoryContract": {"const": "v2"},
+        "deliveryModel": {"const": "logical.v2"},
+        "wakeupAckMode": {"const": "none"},
+        "ackCursorSource": {"const": "inbox-only"},
+        "lifecycleProjection": {"type": "boolean"},
         "retrieval": {
           "type": "object",
           "required": ["provider"],

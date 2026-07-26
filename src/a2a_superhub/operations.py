@@ -515,7 +515,8 @@ class RetentionManager:
         connection.row_factory = sqlite3.Row
         try:
             deliveries = connection.execute(
-                "SELECT sequence,recipient FROM deliveries WHERE note_id=?", (note_id,)
+                "SELECT sequence,recipient FROM logical_deliveries WHERE note_id=?",
+                (note_id,),
             ).fetchall()
             for delivery in deliveries:
                 cursors = connection.execute(
@@ -910,7 +911,9 @@ class OperationsDiagnostics:
                 "memory": {
                     "records": note_records, "bytes": note_bytes,
                     "pendingJobs": _db_count(ops_db, "jobs", "WHERE state NOT IN ('done', 'completed')"),
-                    "deliveries": _db_count(ops_db, "deliveries"),
+                    "deliveries": _db_count(ops_db, "logical_deliveries"),
+                    "logicalDeliveries": _db_count(ops_db, "logical_deliveries"),
+                    "legacyRouteMatches": _db_count(ops_db, "deliveries"),
                     "consumers": _db_count(ops_db, "consumer_cursors"),
                     "activeQuarantine": _db_count(ops_db, "quarantine", "WHERE state = 'active'"),
                     "index": index,

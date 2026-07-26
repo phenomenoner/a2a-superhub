@@ -14,7 +14,18 @@ from urllib.parse import parse_qs, urlparse
 from .artifacts import ArtifactAccessError, ArtifactConflictError, ArtifactError, ArtifactStore, ArtifactTooLargeError
 from .auth import BearerAuth, FixedWindowLimiter, Principal
 from .derivation import DerivationError, DerivationService
-from .memory import AuthorizationError, ConflictError, CursorError, MemoryError as HubMemoryError, MemoryService, MemoryWatcher, RequestTooLargeError
+from .memory import (
+    AuthorizationError,
+    ConflictError,
+    CursorError,
+    CursorRefreshRequiredError,
+    DELIVERY_MODEL_V1,
+    DELIVERY_MODEL_V2,
+    MemoryError as HubMemoryError,
+    MemoryService,
+    MemoryWatcher,
+    RequestTooLargeError,
+)
 from .operations import OperationsDiagnostics, OperationsError, StateLease
 from .parts import normalize_a2a_parts, public_part
 from .store import HubStore
@@ -110,6 +121,11 @@ def make_server(
         )
     elif search_mode != "keyword":
         raise ValueError("search mode must be keyword, local, or server")
+    state_lease = StateLease(state_dir, purpose="runtime")
+    try:
+        state_lease.__enter__()
+    except OperationsError as exc:
+        raise ValueError(str(exc)) from exc
     memory = MemoryService(
         state_dir,
         enable_delivery=enable_delivery,
@@ -120,16 +136,20 @@ def make_server(
         search_provider=search_provider,
         artifact_store=artifacts,
     ) if enable_memory else None
-    if memory:
-        memory.init()
-    derivations = DerivationService(state_dir, artifacts, memory) if enable_derivers and memory else None
-    if derivations:
-        derivations.init()
+    try:
+        if memory:
+            memory.init()
+        derivations = DerivationService(state_dir, artifacts, memory) if enable_derivers and memory else None
+        if derivations:
+            derivations.init()
+    except BaseException:
+        state_lease.__exit__(None, None, None)
+        raise
     operations_diagnostics = OperationsDiagnostics(state_dir, memory_service=memory)
     runtime_watcher_enabled = False
 
     class Handler(BaseHTTPRequestHandler):
-        server_version = "a2a-superhub/0.2"
+        server_version = "a2a-superhub/0.3"
         _principal: Principal | None = None
 
         def log_message(self, fmt: str, *args: Any) -> None:
@@ -146,7 +166,12 @@ def make_server(
             self._principal = result.principal
             limiter_key = f"{self._client_key()}:{self._principal.subject if self._principal else 'anonymous'}"
             if not limiter.allow(limiter_key):
-                self._json({"error": "rate limit exceeded"}, status=HTTPStatus.TOO_MANY_REQUESTS)
+                self._api_error(
+                    "RATE_LIMITED",
+                    "rate limit exceeded",
+                    HTTPStatus.TOO_MANY_REQUESTS,
+                    retryable=True,
+                )
                 return False
             return True
 
@@ -188,10 +213,34 @@ def make_server(
             except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
                 self.close_connection = True
 
-        def _api_error(self, code: str, message: str, status: HTTPStatus, *, retryable: bool = False) -> None:
+        def _api_error(
+            self,
+            code: str,
+            message: str,
+            status: HTTPStatus,
+            *,
+            retryable: bool = False,
+            details: dict[str, Any] | None = None,
+        ) -> None:
+            error: dict[str, Any] = {
+                "code": code,
+                "message": message,
+                "retryable": retryable,
+            }
+            if details:
+                encoded = json.dumps(details, ensure_ascii=False).encode("utf-8")
+                if len(encoded) <= 8192:
+                    error["details"] = details
             self._json(
-                {"error": {"code": code, "message": message, "retryable": retryable}, "traceId": f"trace_{uuid.uuid4().hex}"},
+                {"error": error, "traceId": f"trace_{uuid.uuid4().hex}"},
                 status=status,
+            )
+
+        def _internal_error(self) -> None:
+            self._api_error(
+                "INTERNAL_ERROR",
+                "an internal error occurred",
+                HTTPStatus.INTERNAL_SERVER_ERROR,
             )
 
         def _task_request(self, value: dict[str, Any]) -> dict[str, Any]:
@@ -262,9 +311,13 @@ def make_server(
                 if path == "/v1/agents":
                     self._json({"agents": store.list_agents()})
                     return
-                if path == "/v1/capabilities":
-                    self._json({
-                        "schema": "a2a-superhub.capabilities.v1",
+                if path in {"/v1/capabilities", "/v2/capabilities"}:
+                    capabilities = {
+                        "schema": (
+                            "a2a-superhub.capabilities.v1"
+                            if path.startswith("/v1/")
+                            else "a2a-superhub.capabilities.v2"
+                        ),
                         "memoryFoundation": bool(memory),
                         "memorySharing": bool(memory and memory.enable_delivery),
                         "timelineGraph": bool(memory),
@@ -290,14 +343,30 @@ def make_server(
                             "tokenId": self._principal.token_id,
                             "scopes": sorted(self._principal.scopes),
                         },
-                    })
+                    }
+                    if path.startswith("/v2/"):
+                        capabilities.update(
+                            {
+                                "memoryContract": "v2",
+                                "deliveryModel": DELIVERY_MODEL_V2,
+                                "wakeupAckMode": "none",
+                                "ackCursorSource": "inbox-only",
+                                "lifecycleProjection": bool(memory),
+                            }
+                        )
+                    self._json(capabilities)
                     return
                 if path == "/v1/operations/diagnostics":
                     if not self._principal.has("hub.admin"):
                         raise AuthorizationError("hub.admin scope required")
                     self._json(operations_diagnostics.collect(self._principal))
                     return
-                if memory and path in {"/v1/memory/notes", "/v1/memory/search"}:
+                if memory and path in {
+                    "/v1/memory/notes",
+                    "/v1/memory/search",
+                    "/v2/memory/notes",
+                    "/v2/memory/search",
+                }:
                     if not self._principal.has("memory.read"):
                         raise AuthorizationError("memory.read scope required")
                     query = parse_qs(parsed.query)
@@ -318,27 +387,60 @@ def make_server(
                     ]
                     self._json({"items": items, "search": memory.search_status(), **memory.index_status_snapshot()})
                     return
-                if memory and path.startswith("/v1/memory/notes/"):
+                if memory and path.startswith("/v2/memory/notes/") and path.endswith("/lifecycle"):
+                    note_id = path.split("/")[4]
+                    self._json(memory.note_lifecycle(note_id, self._principal))
+                    return
+                if memory and (
+                    path.startswith("/v1/memory/notes/")
+                    or path.startswith("/v2/memory/notes/")
+                ):
                     if not self._principal.has("memory.read"):
                         raise AuthorizationError("memory.read scope required")
                     note_id = path.split("/")[4]
-                    self._json(memory.read_note(note_id, self._principal))
+                    note = memory.read_note(note_id, self._principal)
+                    query = parse_qs(parsed.query)
+                    if (
+                        path.startswith("/v2/")
+                        and query.get("includeLifecycle", ["false"])[0].casefold()
+                        == "true"
+                    ):
+                        self._json(
+                            {
+                                "note": note,
+                                "lifecycle": memory.note_lifecycle(
+                                    note_id, self._principal
+                                ),
+                            }
+                        )
+                    else:
+                        self._json(note)
                     return
-                if memory and path == "/v1/memory/inbox":
+                if memory and path in {"/v1/memory/inbox", "/v2/memory/inbox"}:
                     query = parse_qs(parsed.query)
                     self._json(memory.fetch_inbox(
                         self._principal, query.get("consumerId", [self._principal.subject])[0],
                         limit=int(query.get("limit", ["100"])[0]),
+                        delivery_model=(
+                            DELIVERY_MODEL_V1
+                            if path.startswith("/v1/")
+                            else DELIVERY_MODEL_V2
+                        ),
                     ))
                     return
-                if memory and path == "/v1/memory/wakeup":
+                if memory and path in {"/v1/memory/wakeup", "/v2/memory/wakeup"}:
                     query = parse_qs(parsed.query)
                     self._json(memory.wakeup(
                         self._principal, query.get("consumerId", [self._principal.subject])[0],
                         budget_bytes=int(query.get("budgetBytes", ["65536"])[0]),
+                        delivery_model=(
+                            DELIVERY_MODEL_V1
+                            if path.startswith("/v1/")
+                            else DELIVERY_MODEL_V2
+                        ),
                     ))
                     return
-                if memory and path == "/v1/memory/timeline":
+                if memory and path in {"/v1/memory/timeline", "/v2/memory/timeline"}:
                     query = parse_qs(parsed.query)
                     pair_raw = query.get("pair", [None])[0]
                     pair = tuple(pair_raw.split(",", 1)) if pair_raw and "," in pair_raw else None
@@ -351,14 +453,14 @@ def make_server(
                         limit=int(query.get("limit", ["100"])[0]),
                     )})
                     return
-                if memory and path == "/v1/memory/graph":
+                if memory and path in {"/v1/memory/graph", "/v2/memory/graph"}:
                     query = parse_qs(parsed.query)
                     node = query.get("node", [""])[0]
                     if not node:
                         raise HubMemoryError("graph node is required")
                     self._json(memory.graph(self._principal, node, hops=int(query.get("hops", ["1"])[0])))
                     return
-                if memory and path == "/v1/memory/stats":
+                if memory and path in {"/v1/memory/stats", "/v2/memory/stats"}:
                     self._json(memory.stats(self._principal))
                     return
                 if memory and path == "/v1/memory/receipts":
@@ -384,7 +486,7 @@ def make_server(
                         return
                     task = store.get_task(task_id)
                     if not task:
-                        self._json({"error": "task not found"}, status=HTTPStatus.NOT_FOUND)
+                        self._api_error("NOT_FOUND", "resource not found", HTTPStatus.NOT_FOUND)
                         return
                     self._json(task)
                     return
@@ -408,7 +510,7 @@ def make_server(
                     if len(parts) == 5 and parts[4] == "content":
                         data = artifacts.get_bytes(artifact_id)
                         if data is None:
-                            self._json({"error": "artifact blob missing"}, status=HTTPStatus.NOT_FOUND)
+                            self._api_error("NOT_FOUND", "resource not found", HTTPStatus.NOT_FOUND)
                             return
                         self._bytes(data, media_type=manifest.get("mediaType") or "application/octet-stream")
                         return
@@ -420,21 +522,28 @@ def make_server(
                     artifacts.require_read(status["artifactId"], self._principal)
                     self._json(status)
                     return
-                self._json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
+                self._api_error("NOT_FOUND", "resource not found", HTTPStatus.NOT_FOUND)
             except KeyError:
                 self._api_error("NOT_FOUND", "resource not found", HTTPStatus.NOT_FOUND)
             except (AuthorizationError, ArtifactAccessError) as exc:
                 self._api_error("SCOPE_DENIED", str(exc), HTTPStatus.FORBIDDEN)
+            except CursorRefreshRequiredError as exc:
+                self._api_error("CURSOR_REFRESH_REQUIRED", str(exc), HTTPStatus.CONFLICT)
             except CursorError as exc:
                 self._api_error("CURSOR_INVALID", str(exc), HTTPStatus.BAD_REQUEST)
             except HubMemoryError as exc:
-                self._api_error("INVALID_REQUEST", str(exc), HTTPStatus.BAD_REQUEST)
+                self._api_error(
+                    "INVALID_REQUEST",
+                    str(exc),
+                    HTTPStatus.BAD_REQUEST,
+                    details=getattr(exc, "details", None),
+                )
             except ArtifactConflictError as exc:
                 self._api_error("ARTIFACT_CONFLICT", str(exc), HTTPStatus.CONFLICT)
             except ArtifactError as exc:
                 self._api_error("INVALID_ARTIFACT", str(exc), HTTPStatus.BAD_REQUEST)
-            except Exception as exc:
-                self._json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            except Exception:
+                self._internal_error()
 
         def do_POST(self) -> None:
             try:
@@ -449,7 +558,7 @@ def make_server(
                 if path == "/v1/agents/register":
                     self._json(store.register_agent(body.get("card") or body))
                     return
-                if memory and path == "/v1/memory/notes":
+                if memory and path in {"/v1/memory/notes", "/v2/memory/notes"}:
                     body_key = body.pop("idempotencyKey", None)
                     header_key = self.headers.get("Idempotency-Key")
                     if body_key and header_key and body_key != header_key:
@@ -461,6 +570,7 @@ def make_server(
                         body,
                         self._principal,
                         idempotency_key=idempotency_key,
+                        contract_version=2 if path.startswith("/v2/") else 1,
                     )
                     self._json(
                         {
@@ -474,7 +584,7 @@ def make_server(
                         status=HTTPStatus.CREATED if result.inserted else HTTPStatus.OK,
                     )
                     return
-                if memory and path == "/v1/memory/inbox/ack":
+                if memory and path in {"/v1/memory/inbox/ack", "/v2/memory/inbox/ack"}:
                     self._json(memory.acknowledge_inbox(
                         self._principal,
                         str(body.get("consumerId") or self._principal.subject),
@@ -573,7 +683,7 @@ def make_server(
                     if len(parts) == 5 and parts[4] == "purge":
                         self._json(derivations.purge(job_id, self._principal))
                         return
-                self._json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
+                self._api_error("NOT_FOUND", "resource not found", HTTPStatus.NOT_FOUND)
             except KeyError:
                 self._api_error("NOT_FOUND", "resource not found", HTTPStatus.NOT_FOUND)
             except (AuthorizationError, ArtifactAccessError) as exc:
@@ -585,6 +695,8 @@ def make_server(
                 self._api_error("SCOPE_DENIED", message, HTTPStatus.FORBIDDEN)
             except ConflictError:
                 self._api_error("IDEMPOTENCY_CONFLICT", "idempotency key conflicts with an earlier request", HTTPStatus.CONFLICT)
+            except CursorRefreshRequiredError as exc:
+                self._api_error("CURSOR_REFRESH_REQUIRED", str(exc), HTTPStatus.CONFLICT)
             except CursorError as exc:
                 self._api_error("CURSOR_INVALID", str(exc), HTTPStatus.BAD_REQUEST)
             except OverflowError:
@@ -598,9 +710,14 @@ def make_server(
             except (ArtifactError, DerivationError) as exc:
                 self._api_error("INVALID_ARTIFACT_OPERATION", str(exc), HTTPStatus.BAD_REQUEST)
             except HubMemoryError as exc:
-                self._api_error("INVALID_REQUEST", str(exc), HTTPStatus.BAD_REQUEST)
-            except Exception as exc:
-                self._json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                self._api_error(
+                    "INVALID_REQUEST",
+                    str(exc),
+                    HTTPStatus.BAD_REQUEST,
+                    details=getattr(exc, "details", None),
+                )
+            except Exception:
+                self._internal_error()
 
         def do_PUT(self) -> None:
             try:
@@ -648,7 +765,7 @@ def make_server(
                     )
                     self._json(result, status=HTTPStatus.OK)
                     return
-                self._json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
+                self._api_error("NOT_FOUND", "resource not found", HTTPStatus.NOT_FOUND)
             except KeyError:
                 self._api_error("NOT_FOUND", "resource not found", HTTPStatus.NOT_FOUND)
             except ArtifactAccessError as exc:
@@ -659,8 +776,8 @@ def make_server(
                 self._api_error("ARTIFACT_CONFLICT", str(exc), HTTPStatus.CONFLICT)
             except ArtifactError as exc:
                 self._api_error("INVALID_ARTIFACT", str(exc), HTTPStatus.BAD_REQUEST)
-            except Exception as exc:
-                self._api_error("INVALID_REQUEST", str(exc), HTTPStatus.BAD_REQUEST)
+            except Exception:
+                self._internal_error()
 
         def _handle_json_rpc(self, body: dict[str, Any]) -> None:
             request_id = body.get("id")
@@ -690,10 +807,21 @@ def make_server(
                     self._json({"jsonrpc": "2.0", "id": request_id, "error": {"code": -32601, "message": "method not found"}}, status=HTTPStatus.BAD_REQUEST)
                     return
                 self._json({"jsonrpc": "2.0", "id": request_id, "result": result})
-            except Exception as exc:
-                self._json({"jsonrpc": "2.0", "id": request_id, "error": {"code": -32000, "message": str(exc)}}, status=HTTPStatus.BAD_REQUEST)
+            except Exception:
+                self._json(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "error": {"code": -32603, "message": "internal error"},
+                    },
+                    status=HTTPStatus.INTERNAL_SERVER_ERROR,
+                )
 
-    httpd = ThreadingHTTPServer((host, port), Handler)
+    try:
+        httpd = ThreadingHTTPServer((host, port), Handler)
+    except BaseException:
+        state_lease.__exit__(None, None, None)
+        raise
     httpd.memory_service = memory  # type: ignore[attr-defined]
     if memory:
         try:
@@ -790,12 +918,6 @@ def make_server(
             httpd.runtime_watcher_enabled = True  # type: ignore[attr-defined]
             httpd.memory_convergence_event = converged  # type: ignore[attr-defined]
             runtime_watcher_enabled = True
-    state_lease = StateLease(state_dir, purpose="runtime")
-    try:
-        state_lease.__enter__()
-    except OperationsError as exc:
-        httpd.server_close()
-        raise ValueError(str(exc)) from exc
     close_before_state_lease = httpd.server_close
 
     def close_with_state_lease() -> None:

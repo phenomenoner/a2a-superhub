@@ -26,6 +26,17 @@ NOTE_SCHEMA = "a2a-superhub.memory.note.v1"
 NOTE_ID = re.compile(r"^mem_[0-9a-f]{32}$")
 PRINCIPAL_ID = re.compile(r"^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$")
 RELATION_TYPES = {"about", "relates_to", "depends_on", "blocks", "produced_by", "updates", "disputes", "references"}
+RELATION_TARGET_NAMESPACES = {
+    "agent", "note", "project", "task", "event", "artifact",
+}
+NOTE_TYPES = ("note", "decision", "handoff", "observation", "task-log", "profile")
+DELIVERY_REASONS = ("about", "direct", "handoff")
+DELIVERY_MODEL_V1 = "reason-row.v1"
+DELIVERY_MODEL_V2 = "logical.v2"
+CURSOR_PURPOSE_INBOX = "inbox-page"
+CURSOR_PURPOSE_UNKNOWN = "unknown"
+OPS_SCHEMA_VERSION = 4
+V1_COMPATIBILITY_THROUGH = "0.3.x"
 RESERVED_NAMES = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))}
 _IDEMPOTENCY_LOCKS: weakref.WeakValueDictionary[tuple[str, str, str, str], threading.RLock] = weakref.WeakValueDictionary()
 _IDEMPOTENCY_LOCKS_GUARD = threading.Lock()
@@ -44,6 +55,7 @@ def _idempotency_lock_count() -> int:
 
 class MemoryError(ValueError):
     code = "invalid_request"
+    details: dict[str, Any] | None = None
 
 
 class AuthorizationError(MemoryError):
@@ -66,6 +78,53 @@ class CursorError(MemoryError):
     code = "cursor_invalid"
 
 
+class CursorRefreshRequiredError(CursorError):
+    code = "cursor_refresh_required"
+
+
+class ValidationError(MemoryError):
+    """A safe, bounded validation failure that never stores the submitted value."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        field_path: str,
+        rule: str,
+        allowed_values: list[str] | tuple[str, ...] | None = None,
+        expected: str | None = None,
+    ):
+        super().__init__(message)
+        details: dict[str, Any] = {
+            "fieldPath": field_path[:128],
+            "rule": rule[:64],
+        }
+        if allowed_values is not None:
+            details["allowedValues"] = [
+                str(value)[:128] for value in list(allowed_values)[:16]
+            ]
+        if expected is not None:
+            details["expected"] = expected[:128]
+        self.details = details
+
+
+def _validation(
+    message: str,
+    *,
+    field_path: str,
+    rule: str,
+    allowed_values: list[str] | tuple[str, ...] | None = None,
+    expected: str | None = None,
+) -> None:
+    raise ValidationError(
+        message,
+        field_path=field_path,
+        rule=rule,
+        allowed_values=allowed_values,
+        expected=expected,
+    )
+
+
 def _yaml_module():
     try:
         import yaml
@@ -76,7 +135,12 @@ def _yaml_module():
 
 def canonical_body(body: str) -> str:
     if not isinstance(body, str):
-        raise MemoryError("body must be a string")
+        _validation(
+            "body must be a string",
+            field_path="body",
+            rule="type",
+            expected="string",
+        )
     value = body.replace("\r\n", "\n").replace("\r", "\n")
     if len(value.encode("utf-8")) > 262_144:
         raise RequestTooLargeError("note body is too large")
@@ -118,7 +182,9 @@ def path_collision_key(root: Path, path: Path) -> str:
     return "/".join(unicodedata.normalize("NFC", part).casefold() for part in relative.parts)
 
 
-def _validate_note(note: dict[str, Any]) -> dict[str, Any]:
+def _validate_note(
+    note: dict[str, Any], *, require_typed_relations: bool = False
+) -> dict[str, Any]:
     allowed = {
         "schema", "id", "type", "title", "author", "visibility", "recordedAt", "occurredAt", "updatedAt",
         "source", "project", "participants", "about", "tags", "artifacts", "supersedes", "relations", "body",
@@ -132,8 +198,13 @@ def _validate_note(note: dict[str, Any]) -> dict[str, Any]:
         raise MemoryError(f"missing note fields: {', '.join(missing)}")
     if note["schema"] != NOTE_SCHEMA or not isinstance(note["id"], str) or not NOTE_ID.fullmatch(note["id"]):
         raise MemoryError("invalid note schema or id")
-    if note["type"] not in {"note", "decision", "handoff", "observation", "task-log", "profile"}:
-        raise MemoryError("invalid note type")
+    if note["type"] not in NOTE_TYPES:
+        _validation(
+            "invalid note type",
+            field_path="type",
+            rule="enum",
+            allowed_values=NOTE_TYPES,
+        )
     if not isinstance(note["title"], str) or not 1 <= len(note["title"]) <= 256:
         raise MemoryError("invalid title")
     if not isinstance(note["author"], str) or not PRINCIPAL_ID.fullmatch(note["author"]):
@@ -188,7 +259,7 @@ def _validate_note(note: dict[str, Any]) -> dict[str, Any]:
     relations = note.get("relations", [])
     if not isinstance(relations, list) or len(relations) > 128:
         raise MemoryError("invalid relations")
-    for relation in relations:
+    for relation_index, relation in enumerate(relations):
         relation_type = relation.get("type") if isinstance(relation, dict) else None
         if relation_type not in RELATION_TYPES and not re.fullmatch(r"x-[a-z0-9][a-z0-9.-]{0,62}", str(relation_type)):
             raise MemoryError("invalid relation")
@@ -196,6 +267,36 @@ def _validate_note(note: dict[str, Any]) -> dict[str, Any]:
             raise MemoryError("invalid relation")
         if not isinstance(relation.get("target"), str) or not 1 <= len(relation["target"]) <= 256:
             raise MemoryError("invalid relation target")
+        if require_typed_relations:
+            namespace, separator, identifier = relation["target"].partition(":")
+            if (
+                not separator
+                or namespace not in RELATION_TARGET_NAMESPACES
+                or not identifier
+            ):
+                _validation(
+                    "relation target requires a typed namespace",
+                    field_path=f"relations[{relation_index}].target",
+                    rule="typed-namespace",
+                    allowed_values=tuple(
+                        f"{value}:<id>"
+                        for value in sorted(RELATION_TARGET_NAMESPACES)
+                    ),
+                )
+            if namespace == "agent" and not PRINCIPAL_ID.fullmatch(identifier):
+                _validation(
+                    "invalid agent relation target",
+                    field_path=f"relations[{relation_index}].target",
+                    rule="identifier",
+                    expected="agent:<principal-id>",
+                )
+            if namespace == "note" and not NOTE_ID.fullmatch(identifier):
+                _validation(
+                    "invalid note relation target",
+                    field_path=f"relations[{relation_index}].target",
+                    rule="identifier",
+                    expected="note:mem_<32-lowercase-hex>",
+                )
     note["body"] = canonical_body(note["body"])
     return note
 
@@ -397,92 +498,241 @@ class MemoryService:
         finally:
             conn.close()
 
+    @staticmethod
+    def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+        return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")}
+
+    @staticmethod
+    def _execute_sql_batch(conn: sqlite3.Connection, script: str) -> None:
+        """Execute this module's simple DDL batch without executescript auto-commit."""
+        for statement in script.split(";"):
+            statement = statement.strip()
+            if statement:
+                conn.execute(statement)
+
+    @staticmethod
+    def _logical_delivery_id(note_id: str, recipient: str) -> str:
+        material = f"a2a-superhub.logical-delivery.v2\0{note_id}\0{recipient}"
+        return f"del_{hashlib.sha256(material.encode('utf-8')).hexdigest()}"
+
+    def _ensure_ops_schema_v4(self, conn: sqlite3.Connection) -> None:
+        version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+        if version > OPS_SCHEMA_VERSION:
+            raise MemoryError(
+                f"ops schema {version} is newer than supported schema {OPS_SCHEMA_VERSION}"
+            )
+        conn.execute("PRAGMA journal_mode=WAL")
+        if not conn.in_transaction:
+            conn.execute("BEGIN IMMEDIATE")
+        self._execute_sql_batch(
+            conn,
+            """
+            CREATE TABLE IF NOT EXISTS migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS idempotency(key TEXT NOT NULL, principal TEXT NOT NULL, operation TEXT NOT NULL, request_hash TEXT NOT NULL, note_id TEXT NOT NULL, trace_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, PRIMARY KEY(principal, operation, key));
+            CREATE TABLE IF NOT EXISTS jobs(operation_id TEXT PRIMARY KEY, note_id TEXT NOT NULL, state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS quarantine(path TEXT PRIMARY KEY, reason TEXT NOT NULL, observed_at TEXT NOT NULL, resolved_at TEXT, state TEXT NOT NULL DEFAULT 'active');
+            CREATE TABLE IF NOT EXISTS deliveries(
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                delivery_id TEXT NOT NULL UNIQUE,
+                note_id TEXT NOT NULL,
+                recipient TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                trace_id TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                UNIQUE(note_id, recipient, reason)
+            );
+            CREATE TABLE IF NOT EXISTS consumer_cursors(
+                principal TEXT NOT NULL,
+                consumer_id TEXT NOT NULL,
+                acked_sequence INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(principal, consumer_id)
+            );
+            CREATE TABLE IF NOT EXISTS issued_cursors(
+                cursor_hash TEXT PRIMARY KEY,
+                principal TEXT NOT NULL,
+                consumer_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                issued_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS ops_metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS receipts(
+                trace_id TEXT NOT NULL,
+                phase TEXT NOT NULL,
+                operation_id TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                PRIMARY KEY(trace_id, phase, operation_id)
+            );
+            CREATE TABLE IF NOT EXISTS logical_deliveries(
+                sequence INTEGER PRIMARY KEY,
+                delivery_id TEXT NOT NULL UNIQUE,
+                note_id TEXT NOT NULL,
+                recipient TEXT NOT NULL,
+                trace_id TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                UNIQUE(note_id, recipient)
+            );
+            CREATE TABLE IF NOT EXISTS logical_delivery_reasons(
+                delivery_id TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                PRIMARY KEY(delivery_id, reason)
+            );
+            CREATE TABLE IF NOT EXISTS delivery_aliases(
+                legacy_delivery_id TEXT PRIMARY KEY,
+                delivery_id TEXT NOT NULL,
+                legacy_sequence INTEGER NOT NULL,
+                reason TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS delivery_sequence_state(
+                singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                high_water INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS delivery_route_snapshots(
+                note_id TEXT PRIMARY KEY,
+                routes_json TEXT NOT NULL,
+                recorded_at TEXT NOT NULL,
+                conflict_json TEXT
+            );
+            CREATE TABLE IF NOT EXISTS logical_ack_receipts(
+                principal TEXT NOT NULL,
+                consumer_id TEXT NOT NULL,
+                delivery_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                acknowledged_at TEXT NOT NULL,
+                cursor_hash TEXT NOT NULL,
+                PRIMARY KEY(principal, consumer_id, delivery_id)
+            );
+            CREATE TABLE IF NOT EXISTS issued_cursor_items(
+                cursor_hash TEXT NOT NULL,
+                delivery_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                PRIMARY KEY(cursor_hash, delivery_id)
+            );
+            INSERT OR IGNORE INTO migrations(version, applied_at) VALUES (1, 'durable-memory-foundation');
+            INSERT OR IGNORE INTO migrations(version, applied_at) VALUES (2, 'offline-sharing-foundation');
+            UPDATE jobs SET state = 'pending' WHERE state = 'running';
+            """,
+        )
+        columns = self._table_columns(conn, "idempotency")
+        if "principal" not in columns or "operation" not in columns:
+            self._execute_sql_batch(
+                conn,
+                """
+                ALTER TABLE idempotency RENAME TO idempotency_legacy;
+                CREATE TABLE idempotency(key TEXT NOT NULL, principal TEXT NOT NULL, operation TEXT NOT NULL, request_hash TEXT NOT NULL, note_id TEXT NOT NULL, trace_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, PRIMARY KEY(principal, operation, key));
+                INSERT OR IGNORE INTO idempotency(key, principal, operation, request_hash, note_id, trace_id, created_at)
+                SELECT key, 'local.operator', 'memory.note.create.api', request_hash, note_id, '', created_at FROM idempotency_legacy;
+                DROP TABLE idempotency_legacy;
+                """,
+            )
+        if "trace_id" not in self._table_columns(conn, "idempotency"):
+            conn.execute("ALTER TABLE idempotency ADD COLUMN trace_id TEXT NOT NULL DEFAULT ''")
+        quarantine_columns = self._table_columns(conn, "quarantine")
+        if "resolved_at" not in quarantine_columns:
+            conn.execute("ALTER TABLE quarantine ADD COLUMN resolved_at TEXT")
+        if "state" not in quarantine_columns:
+            conn.execute("ALTER TABLE quarantine ADD COLUMN state TEXT NOT NULL DEFAULT 'active'")
+        if "trace_id" not in self._table_columns(conn, "deliveries"):
+            conn.execute("ALTER TABLE deliveries ADD COLUMN trace_id TEXT NOT NULL DEFAULT ''")
+        cursor_columns = self._table_columns(conn, "issued_cursors")
+        if "token_version" not in cursor_columns:
+            conn.execute("ALTER TABLE issued_cursors ADD COLUMN token_version INTEGER NOT NULL DEFAULT 1")
+        if "delivery_model" not in cursor_columns:
+            conn.execute(
+                f"ALTER TABLE issued_cursors ADD COLUMN delivery_model TEXT NOT NULL DEFAULT '{DELIVERY_MODEL_V1}'"
+            )
+        if "cursor_kind" not in cursor_columns:
+            conn.execute(
+                f"ALTER TABLE issued_cursors ADD COLUMN cursor_kind TEXT NOT NULL DEFAULT '{CURSOR_PURPOSE_UNKNOWN}'"
+            )
+        self._backfill_logical_deliveries(conn)
+        conn.execute(
+            "INSERT OR IGNORE INTO migrations(version, applied_at) VALUES (?, ?)",
+            (OPS_SCHEMA_VERSION, "logical-delivery-and-exact-page-ack"),
+        )
+        conn.execute(f"PRAGMA user_version={OPS_SCHEMA_VERSION}")
+
+    def _backfill_logical_deliveries(self, conn: sqlite3.Connection) -> None:
+        groups = conn.execute(
+            """
+            SELECT note_id, recipient, MAX(sequence) AS logical_sequence,
+                   MIN(created_at) AS created_at, MAX(trace_id) AS trace_id
+            FROM deliveries GROUP BY note_id, recipient
+            """
+        ).fetchall()
+        for group in groups:
+            delivery_id = self._logical_delivery_id(group["note_id"], group["recipient"])
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO logical_deliveries(
+                    sequence, delivery_id, note_id, recipient, trace_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    int(group["logical_sequence"]),
+                    delivery_id,
+                    group["note_id"],
+                    group["recipient"],
+                    group["trace_id"] or "",
+                    group["created_at"],
+                ),
+            )
+            aliases = conn.execute(
+                "SELECT delivery_id, sequence, reason FROM deliveries WHERE note_id=? AND recipient=?",
+                (group["note_id"], group["recipient"]),
+            ).fetchall()
+            for alias in aliases:
+                conn.execute(
+                    "INSERT OR IGNORE INTO logical_delivery_reasons(delivery_id, reason) VALUES (?, ?)",
+                    (delivery_id, alias["reason"]),
+                )
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO delivery_aliases(
+                        legacy_delivery_id, delivery_id, legacy_sequence, reason
+                    ) VALUES (?, ?, ?, ?)
+                    """,
+                    (alias["delivery_id"], delivery_id, int(alias["sequence"]), alias["reason"]),
+                )
+        maxima = [
+            int(conn.execute("SELECT COALESCE(MAX(sequence), 0) FROM deliveries").fetchone()[0]),
+            int(conn.execute("SELECT COALESCE(MAX(sequence), 0) FROM logical_deliveries").fetchone()[0]),
+            int(conn.execute("SELECT COALESCE(MAX(sequence), 0) FROM issued_cursors").fetchone()[0]),
+            int(conn.execute("SELECT COALESCE(MAX(acked_sequence), 0) FROM consumer_cursors").fetchone()[0]),
+        ]
+        conn.execute(
+            """
+            INSERT INTO delivery_sequence_state(singleton, high_water) VALUES (1, ?)
+            ON CONFLICT(singleton) DO UPDATE SET high_water=MAX(high_water, excluded.high_water)
+            """,
+            (max(maxima),),
+        )
+
     def init(self) -> None:
         if self._initialized:
             try:
                 conn = sqlite3.connect(self.ops_path)
                 try:
                     version = int(conn.execute("PRAGMA user_version").fetchone()[0])
-                    columns = {row[1] for row in conn.execute("PRAGMA table_info(idempotency)")}
                 finally:
                     conn.close()
-                if version == 3 and {"principal", "operation", "trace_id"} <= columns:
+                if version == OPS_SCHEMA_VERSION:
                     return
+                if version > OPS_SCHEMA_VERSION:
+                    raise MemoryError(
+                        f"ops schema {version} is newer than supported schema {OPS_SCHEMA_VERSION}"
+                    )
+            except MemoryError:
+                raise
             except sqlite3.Error:
                 pass
             self._initialized = False
         self.root.mkdir(parents=True, exist_ok=True)
         with self._connect(self.ops_path) as conn:
-            conn.executescript(
-                """
-                PRAGMA journal_mode=WAL;
-                CREATE TABLE IF NOT EXISTS migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS idempotency(key TEXT NOT NULL, principal TEXT NOT NULL, operation TEXT NOT NULL, request_hash TEXT NOT NULL, note_id TEXT NOT NULL, trace_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, PRIMARY KEY(principal, operation, key));
-                CREATE TABLE IF NOT EXISTS jobs(operation_id TEXT PRIMARY KEY, note_id TEXT NOT NULL, state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS quarantine(path TEXT PRIMARY KEY, reason TEXT NOT NULL, observed_at TEXT NOT NULL, resolved_at TEXT, state TEXT NOT NULL DEFAULT 'active');
-                CREATE TABLE IF NOT EXISTS deliveries(
-                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-                    delivery_id TEXT NOT NULL UNIQUE,
-                    note_id TEXT NOT NULL,
-                    recipient TEXT NOT NULL,
-                    reason TEXT NOT NULL,
-                    trace_id TEXT NOT NULL DEFAULT '',
-                    created_at TEXT NOT NULL,
-                    UNIQUE(note_id, recipient, reason)
-                );
-                CREATE TABLE IF NOT EXISTS consumer_cursors(
-                    principal TEXT NOT NULL,
-                    consumer_id TEXT NOT NULL,
-                    acked_sequence INTEGER NOT NULL DEFAULT 0,
-                    updated_at TEXT NOT NULL,
-                    PRIMARY KEY(principal, consumer_id)
-                );
-                CREATE TABLE IF NOT EXISTS issued_cursors(
-                    cursor_hash TEXT PRIMARY KEY,
-                    principal TEXT NOT NULL,
-                    consumer_id TEXT NOT NULL,
-                    sequence INTEGER NOT NULL,
-                    issued_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS ops_metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS receipts(
-                    trace_id TEXT NOT NULL,
-                    phase TEXT NOT NULL,
-                    operation_id TEXT NOT NULL,
-                    subject TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    metadata_json TEXT NOT NULL,
-                    PRIMARY KEY(trace_id, phase, operation_id)
-                );
-                INSERT OR IGNORE INTO migrations(version, applied_at) VALUES (1, 'durable-memory-foundation');
-                INSERT OR IGNORE INTO migrations(version, applied_at) VALUES (2, 'offline-sharing-foundation');
-                UPDATE jobs SET state = 'pending' WHERE state = 'running';
-                PRAGMA user_version=3;
-                """
-            )
-            columns = {row[1] for row in conn.execute("PRAGMA table_info(idempotency)").fetchall()}
-            if "principal" not in columns or "operation" not in columns:
-                conn.executescript(
-                    """
-                    ALTER TABLE idempotency RENAME TO idempotency_legacy;
-                    CREATE TABLE idempotency(key TEXT NOT NULL, principal TEXT NOT NULL, operation TEXT NOT NULL, request_hash TEXT NOT NULL, note_id TEXT NOT NULL, trace_id TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, PRIMARY KEY(principal, operation, key));
-                    INSERT OR IGNORE INTO idempotency(key, principal, operation, request_hash, note_id, trace_id, created_at)
-                    SELECT key, 'local.operator', 'memory.note.create.api', request_hash, note_id, '', created_at FROM idempotency_legacy;
-                    DROP TABLE idempotency_legacy;
-                    """
-                )
-            idempotency_columns = {row[1] for row in conn.execute("PRAGMA table_info(idempotency)").fetchall()}
-            if "trace_id" not in idempotency_columns:
-                conn.execute("ALTER TABLE idempotency ADD COLUMN trace_id TEXT NOT NULL DEFAULT ''")
-            quarantine_columns = {row[1] for row in conn.execute("PRAGMA table_info(quarantine)").fetchall()}
-            if "resolved_at" not in quarantine_columns:
-                conn.execute("ALTER TABLE quarantine ADD COLUMN resolved_at TEXT")
-            if "state" not in quarantine_columns:
-                conn.execute("ALTER TABLE quarantine ADD COLUMN state TEXT NOT NULL DEFAULT 'active'")
-            delivery_columns = {row[1] for row in conn.execute("PRAGMA table_info(deliveries)").fetchall()}
-            if "trace_id" not in delivery_columns:
-                conn.execute("ALTER TABLE deliveries ADD COLUMN trace_id TEXT NOT NULL DEFAULT ''")
+            self._ensure_ops_schema_v4(conn)
         self._init_index()
         valid, collided_ids = self._scan_notes()
         self._recover_jobs_from_scan(valid, collided_ids)
@@ -570,6 +820,7 @@ class MemoryService:
         failpoint: str | Callable[[str], None] | None = None,
         source_kind: str = "api",
         trace_id: str | None = None,
+        contract_version: int = 1,
     ) -> CreateResult:
         if source_kind not in {"api", "cli"}:
             raise MemoryError("unsupported create operation")
@@ -579,10 +830,12 @@ class MemoryService:
                 return self._create_note_owned(
                     request, principal, idempotency_key=idempotency_key, failpoint=failpoint,
                     source_kind=source_kind, trace_id=trace_id,
+                    contract_version=contract_version,
                 )
         return self._create_note_owned(
             request, principal, idempotency_key=idempotency_key, failpoint=failpoint,
             source_kind=source_kind, trace_id=trace_id,
+            contract_version=contract_version,
         )
 
     def _create_note_owned(
@@ -594,6 +847,7 @@ class MemoryService:
         failpoint: str | Callable[[str], None] | None,
         source_kind: str,
         trace_id: str | None,
+        contract_version: int,
     ) -> CreateResult:
         self.init()
         operation = f"memory.note.create.{source_kind}"
@@ -651,7 +905,9 @@ class MemoryService:
                 "type": request.get("type") or "note",
             }
         )
-        note = _validate_note(note)
+        if contract_version not in {1, 2}:
+            raise MemoryError("unsupported memory contract version")
+        note = _validate_note(note, require_typed_relations=contract_version == 2)
         if note.get("supersedes"):
             previous = self._read_authoritative(note["supersedes"])
             if previous["author"] != principal.subject and not principal.has("memory.admin"):
@@ -729,6 +985,7 @@ class MemoryService:
 
     @staticmethod
     def _delivery_id(note_id: str, recipient: str, reason: str) -> str:
+        """Return the stable v1 reason-row alias identifier."""
         digest = hashlib.sha256(f"{note_id}\0{recipient}\0{reason}".encode("utf-8")).hexdigest()
         return f"del_{digest}"
 
@@ -741,6 +998,52 @@ class MemoryService:
             if note["type"] == "handoff":
                 targets.add((recipient, "handoff"))
         return {(recipient, reason) for recipient, reason in targets if recipient != note["author"]}
+
+    def _snapshotted_delivery_targets(
+        self, conn: sqlite3.Connection, note: dict[str, Any]
+    ) -> set[tuple[str, str]]:
+        proposed = sorted(self._delivery_targets(note))
+        proposed_json = json_dumps(
+            [{"recipient": recipient, "reason": reason} for recipient, reason in proposed]
+        )
+        row = conn.execute(
+            "SELECT routes_json FROM delivery_route_snapshots WHERE note_id=?",
+            (note["id"],),
+        ).fetchone()
+        if row is None:
+            conn.execute(
+                """
+                INSERT INTO delivery_route_snapshots(note_id, routes_json, recorded_at)
+                VALUES (?, ?, ?)
+                """,
+                (note["id"], proposed_json, self.now()),
+            )
+            return set(proposed)
+        recorded = json.loads(row["routes_json"])
+        if row["routes_json"] != proposed_json:
+            conn.execute(
+                """
+                UPDATE delivery_route_snapshots
+                SET conflict_json=COALESCE(conflict_json, ?)
+                WHERE note_id=?
+                """,
+                (
+                    json_dumps(
+                        {
+                            "observedAt": self.now(),
+                            "proposedRoutes": json.loads(proposed_json),
+                        }
+                    ),
+                    note["id"],
+                ),
+            )
+        return {
+            (str(item["recipient"]), str(item["reason"]))
+            for item in recorded
+            if isinstance(item, dict)
+            and item.get("reason") in DELIVERY_REASONS
+            and isinstance(item.get("recipient"), str)
+        }
 
     def _corpus_revision(self, valid: dict[str, tuple[dict[str, Any], Path]]) -> str:
         digest = hashlib.sha256()
@@ -780,25 +1083,103 @@ class MemoryService:
         trace_id = trace_id or f"trace_delivery_{hashlib.sha256(note['id'].encode()).hexdigest()[:16]}"
         def apply(target: sqlite3.Connection) -> None:
             nonlocal inserted
-            for recipient, reason in sorted(self._delivery_targets(note)):
-                delivery_id = self._delivery_id(note["id"], recipient, reason)
+            grouped: dict[str, list[str]] = {}
+            for recipient, reason in sorted(self._snapshotted_delivery_targets(target, note)):
+                grouped.setdefault(recipient, []).append(reason)
+            for recipient, reasons in sorted(grouped.items()):
+                aliases: list[sqlite3.Row] = []
+                for reason in sorted(reasons):
+                    legacy_delivery_id = self._delivery_id(note["id"], recipient, reason)
+                    result = target.execute(
+                        """
+                        INSERT OR IGNORE INTO deliveries(delivery_id, note_id, recipient, reason, trace_id, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            legacy_delivery_id,
+                            note["id"],
+                            recipient,
+                            reason,
+                            trace_id,
+                            self.now(),
+                        ),
+                    )
+                    if result.rowcount == 0 and supplied_trace:
+                        target.execute(
+                            "UPDATE deliveries SET trace_id=? WHERE delivery_id=? AND trace_id LIKE 'trace_delivery_%'",
+                            (trace_id, legacy_delivery_id),
+                        )
+                    aliases.append(
+                        target.execute(
+                            "SELECT delivery_id, sequence, reason FROM deliveries WHERE delivery_id=?",
+                            (legacy_delivery_id,),
+                        ).fetchone()
+                    )
+                logical_delivery_id = self._logical_delivery_id(note["id"], recipient)
+                logical_sequence = max(int(alias["sequence"]) for alias in aliases)
                 result = target.execute(
                     """
-                    INSERT OR IGNORE INTO deliveries(delivery_id, note_id, recipient, reason, trace_id, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT OR IGNORE INTO logical_deliveries(
+                        sequence, delivery_id, note_id, recipient, trace_id, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
                     """,
-                    (delivery_id, note["id"], recipient, reason, trace_id, self.now()),
+                    (
+                        logical_sequence,
+                        logical_delivery_id,
+                        note["id"],
+                        recipient,
+                        trace_id,
+                        self.now(),
+                    ),
                 )
                 inserted += result.rowcount
                 if result.rowcount == 0 and supplied_trace:
                     target.execute(
-                        "UPDATE deliveries SET trace_id=? WHERE delivery_id=? AND trace_id LIKE 'trace_delivery_%'",
-                        (trace_id, delivery_id),
+                        "UPDATE logical_deliveries SET trace_id=? WHERE delivery_id=? AND trace_id LIKE 'trace_delivery_%'",
+                        (trace_id, logical_delivery_id),
                     )
-                self._insert_receipt_conn(
-                    target, trace_id, "delivery", delivery_id, note["author"], "queued",
-                    {"noteId": note["id"], "recipient": recipient, "reason": reason},
+                for alias in aliases:
+                    target.execute(
+                        """
+                        INSERT OR IGNORE INTO delivery_aliases(
+                            legacy_delivery_id, delivery_id, legacy_sequence, reason
+                        ) VALUES (?, ?, ?, ?)
+                        """,
+                        (
+                            alias["delivery_id"],
+                            logical_delivery_id,
+                            int(alias["sequence"]),
+                            alias["reason"],
+                        ),
+                    )
+                    target.execute(
+                        """
+                        INSERT OR IGNORE INTO logical_delivery_reasons(delivery_id, reason)
+                        VALUES (?, ?)
+                        """,
+                        (logical_delivery_id, alias["reason"]),
+                    )
+                target.execute(
+                    """
+                    INSERT INTO delivery_sequence_state(singleton, high_water) VALUES (1, ?)
+                    ON CONFLICT(singleton) DO UPDATE SET high_water=MAX(high_water, excluded.high_water)
+                    """,
+                    (logical_sequence,),
                 )
+                if result.rowcount:
+                    self._insert_receipt_conn(
+                        target,
+                        trace_id,
+                        "delivery",
+                        logical_delivery_id,
+                        note["author"],
+                        "queued",
+                        {
+                            "noteId": note["id"],
+                            "recipient": recipient,
+                            "count": len(reasons),
+                        },
+                    )
         if conn is not None:
             apply(conn)
         else:
@@ -851,17 +1232,42 @@ class MemoryService:
             for row in rows
         ]
 
-    def list_deliveries(self) -> list[dict[str, Any]]:
+    def list_deliveries(self, *, delivery_model: str = DELIVERY_MODEL_V2) -> list[dict[str, Any]]:
         self.init()
         with self._connect(self.ops_path) as conn:
-            rows = conn.execute("SELECT * FROM deliveries ORDER BY sequence").fetchall()
+            if delivery_model == DELIVERY_MODEL_V1:
+                rows = conn.execute("SELECT * FROM deliveries ORDER BY sequence").fetchall()
+                return [
+                    {
+                        "sequence": row["sequence"],
+                        "deliveryId": row["delivery_id"],
+                        "noteId": row["note_id"],
+                        "recipient": row["recipient"],
+                        "reason": row["reason"],
+                        "createdAt": row["created_at"],
+                    }
+                    for row in rows
+                ]
+            if delivery_model != DELIVERY_MODEL_V2:
+                raise MemoryError("unsupported delivery model")
+            rows = conn.execute("SELECT * FROM logical_deliveries ORDER BY sequence").fetchall()
+            reasons = {
+                row["delivery_id"]: [
+                    reason["reason"]
+                    for reason in conn.execute(
+                        "SELECT reason FROM logical_delivery_reasons WHERE delivery_id=? ORDER BY reason",
+                        (row["delivery_id"],),
+                    ).fetchall()
+                ]
+                for row in rows
+            }
         return [
             {
                 "sequence": row["sequence"],
                 "deliveryId": row["delivery_id"],
                 "noteId": row["note_id"],
                 "recipient": row["recipient"],
-                "reason": row["reason"],
+                "reasons": reasons[row["delivery_id"]],
                 "createdAt": row["created_at"],
             }
             for row in rows
@@ -878,12 +1284,33 @@ class MemoryService:
                 row = conn.execute("SELECT value FROM ops_metadata WHERE key='cursor_secret'").fetchone()
         return base64.urlsafe_b64decode(row["value"])
 
-    def _encode_cursor(self, principal: str, consumer_id: str, sequence: int, *, nonce: str | None = None) -> str:
-        payload = json_dumps({"v": 1, "p": principal, "c": consumer_id, "s": sequence, "n": nonce or uuid.uuid4().hex}).encode("utf-8")
+    def _encode_cursor(
+        self,
+        principal: str,
+        consumer_id: str,
+        sequence: int,
+        *,
+        nonce: str | None = None,
+        token_version: int = 1,
+        delivery_model: str = DELIVERY_MODEL_V1,
+        cursor_kind: str = CURSOR_PURPOSE_UNKNOWN,
+    ) -> str:
+        value: dict[str, Any] = {
+            "v": token_version,
+            "p": principal,
+            "c": consumer_id,
+            "s": sequence,
+            "n": nonce or uuid.uuid4().hex,
+        }
+        if token_version == 2:
+            value.update({"m": delivery_model, "k": cursor_kind})
+        payload = json_dumps(value).encode("utf-8")
         signature = hmac.new(self._cursor_secret(), payload, hashlib.sha256).digest()
         return base64.urlsafe_b64encode(payload + signature).decode("ascii").rstrip("=")
 
-    def _decode_cursor(self, token: str, principal: str, consumer_id: str) -> tuple[int, str]:
+    def _decode_cursor(
+        self, token: str, principal: str, consumer_id: str
+    ) -> tuple[int, str, int, str, str]:
         try:
             padded = token + "=" * (-len(token) % 4)
             raw = base64.urlsafe_b64decode(padded.encode("ascii"))
@@ -892,25 +1319,91 @@ class MemoryService:
             if not hmac.compare_digest(signature, expected):
                 raise CursorError("invalid cursor")
             value = json.loads(payload.decode("utf-8"))
-            if value != {"v": 1, "p": principal, "c": consumer_id, "s": value.get("s"), "n": value.get("n")}:
+            token_version = value.get("v")
+            if token_version == 1:
+                expected_value = {
+                    "v": 1,
+                    "p": principal,
+                    "c": consumer_id,
+                    "s": value.get("s"),
+                    "n": value.get("n"),
+                }
+                delivery_model = DELIVERY_MODEL_V1
+                cursor_kind = CURSOR_PURPOSE_UNKNOWN
+            elif token_version == 2:
+                expected_value = {
+                    "v": 2,
+                    "p": principal,
+                    "c": consumer_id,
+                    "s": value.get("s"),
+                    "n": value.get("n"),
+                    "m": value.get("m"),
+                    "k": value.get("k"),
+                }
+                delivery_model = value.get("m")
+                cursor_kind = value.get("k")
+                if delivery_model not in {DELIVERY_MODEL_V1, DELIVERY_MODEL_V2}:
+                    raise CursorError("invalid cursor model")
+                if cursor_kind != CURSOR_PURPOSE_INBOX:
+                    raise CursorError("invalid cursor purpose")
+            else:
+                raise CursorError("invalid cursor version")
+            if value != expected_value:
                 raise CursorError("invalid cursor binding")
             sequence = value["s"]
             nonce = value["n"]
             if not isinstance(sequence, int) or isinstance(sequence, bool) or sequence < 0 or not isinstance(nonce, str) or not re.fullmatch(r"[0-9a-f]{32}", nonce):
                 raise CursorError("invalid cursor sequence")
-            return sequence, nonce
+            return sequence, nonce, token_version, delivery_model, cursor_kind
         except CursorError:
             raise
         except Exception as exc:
             raise CursorError("invalid cursor") from exc
 
-    def _issue_cursor(self, principal: str, consumer_id: str, sequence: int) -> str:
-        token = self._encode_cursor(principal, consumer_id, sequence)
+    def _issue_cursor(
+        self,
+        principal: str,
+        consumer_id: str,
+        sequence: int,
+        *,
+        delivery_model: str,
+        items: list[tuple[str, int]],
+    ) -> str:
+        token_version = 2
+        token = self._encode_cursor(
+            principal,
+            consumer_id,
+            sequence,
+            token_version=token_version,
+            delivery_model=delivery_model,
+            cursor_kind=CURSOR_PURPOSE_INBOX,
+        )
         digest = hashlib.sha256(token.encode("ascii")).hexdigest()
         with self._connect(self.ops_path) as conn:
             conn.execute(
-                "INSERT INTO issued_cursors VALUES (?, ?, ?, ?, ?)",
-                (digest, principal, consumer_id, sequence, self.now()),
+                """
+                INSERT INTO issued_cursors(
+                    cursor_hash, principal, consumer_id, sequence, issued_at,
+                    token_version, delivery_model, cursor_kind
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    digest,
+                    principal,
+                    consumer_id,
+                    sequence,
+                    self.now(),
+                    token_version,
+                    delivery_model,
+                    CURSOR_PURPOSE_INBOX,
+                ),
+            )
+            conn.executemany(
+                """
+                INSERT INTO issued_cursor_items(cursor_hash, delivery_id, sequence)
+                VALUES (?, ?, ?)
+                """,
+                [(digest, delivery_id, item_sequence) for delivery_id, item_sequence in items],
             )
         return token
 
@@ -920,11 +1413,17 @@ class MemoryService:
         consumer_id: str,
         *,
         limit: int = 100,
+        delivery_model: str = DELIVERY_MODEL_V2,
+        issue_cursor: bool = True,
         failpoint: str | Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         self.init()
         if not principal.has("memory.read") or not PRINCIPAL_ID.fullmatch(consumer_id):
             raise AuthorizationError("memory.read scope and valid consumer are required")
+        if delivery_model not in {DELIVERY_MODEL_V1, DELIVERY_MODEL_V2}:
+            raise MemoryError("unsupported delivery model")
+        table = "deliveries" if delivery_model == DELIVERY_MODEL_V1 else "logical_deliveries"
+        page_limit = max(1, min(limit, 100))
         with self._connect(self.ops_path) as conn:
             cursor_row = conn.execute(
                 "SELECT acked_sequence FROM consumer_cursors WHERE principal=? AND consumer_id=?",
@@ -932,10 +1431,23 @@ class MemoryService:
             ).fetchone()
             acknowledged = int(cursor_row[0]) if cursor_row else 0
             rows = conn.execute(
-                "SELECT * FROM deliveries WHERE recipient=? AND sequence>? ORDER BY sequence LIMIT ?",
-                (principal.subject, acknowledged, max(1, min(limit, 100))),
+                f"SELECT * FROM {table} WHERE recipient=? AND sequence>? ORDER BY sequence LIMIT ?",
+                (principal.subject, acknowledged, page_limit + 1),
             ).fetchall()
+            has_more = len(rows) > page_limit
+            rows = rows[:page_limit]
+            reason_sets = {
+                row["delivery_id"]: [
+                    reason["reason"]
+                    for reason in conn.execute(
+                        "SELECT reason FROM logical_delivery_reasons WHERE delivery_id=? ORDER BY reason",
+                        (row["delivery_id"],),
+                    ).fetchall()
+                ]
+                for row in rows
+            } if delivery_model == DELIVERY_MODEL_V2 else {}
         items: list[dict[str, Any]] = []
+        issued_items: list[tuple[str, int]] = []
         scanned = acknowledged
         for row in rows:
             scanned = max(scanned, int(row["sequence"]))
@@ -943,15 +1455,32 @@ class MemoryService:
                 note = self.read_note(row["note_id"], principal)
             except (KeyError, QuarantineError):
                 continue
-            items.append(
-                {
-                    "deliveryId": row["delivery_id"],
-                    "reason": row["reason"],
-                    "note": note,
-                    "provenance": {"noteId": note["id"], "author": note["author"], "recordedAt": note["recordedAt"]},
-                }
+            item = {
+                "deliveryId": row["delivery_id"],
+                "note": note,
+                "provenance": {
+                    "noteId": note["id"],
+                    "author": note["author"],
+                    "recordedAt": note["recordedAt"],
+                },
+            }
+            if delivery_model == DELIVERY_MODEL_V1:
+                item["reason"] = row["reason"]
+            else:
+                item["reasons"] = reason_sets[row["delivery_id"]]
+            items.append(item)
+            issued_items.append((row["delivery_id"], int(row["sequence"])))
+        result: dict[str, Any] = {"consumerId": consumer_id, "items": items}
+        if delivery_model == DELIVERY_MODEL_V2:
+            result["hasMore"] = has_more
+        if issue_cursor:
+            result["cursor"] = self._issue_cursor(
+                principal.subject,
+                consumer_id,
+                scanned,
+                delivery_model=delivery_model,
+                items=issued_items,
             )
-        result = {"consumerId": consumer_id, "items": items, "cursor": self._issue_cursor(principal.subject, consumer_id, scanned)}
         _hit_failpoint(failpoint, "after_fetch_before_response")
         return result
 
@@ -966,32 +1495,95 @@ class MemoryService:
         self.init()
         if not principal.has("memory.read") or not PRINCIPAL_ID.fullmatch(consumer_id):
             raise AuthorizationError("memory.read scope and valid consumer are required")
-        sequence, _ = self._decode_cursor(cursor, principal.subject, consumer_id)
+        sequence, _, token_version, token_model, token_kind = self._decode_cursor(
+            cursor, principal.subject, consumer_id
+        )
         cursor_hash = hashlib.sha256(cursor.encode("ascii")).hexdigest()
         with self._connect(self.ops_path) as conn:
             issued = conn.execute(
-                "SELECT 1 FROM issued_cursors WHERE cursor_hash=? AND principal=? AND consumer_id=? AND sequence=?",
+                """
+                SELECT * FROM issued_cursors
+                WHERE cursor_hash=? AND principal=? AND consumer_id=? AND sequence=?
+                """,
                 (cursor_hash, principal.subject, consumer_id, sequence),
             ).fetchone()
             if not issued:
                 raise CursorError("cursor was not issued")
+            ledger_model = issued["delivery_model"]
+            ledger_kind = issued["cursor_kind"]
+            if int(issued["token_version"]) != token_version:
+                raise CursorError("cursor ledger version mismatch")
+            if token_version == 2 and (
+                ledger_model != token_model or ledger_kind != token_kind
+            ):
+                raise CursorError("cursor ledger binding mismatch")
             row = conn.execute(
                 "SELECT acked_sequence FROM consumer_cursors WHERE principal=? AND consumer_id=?",
                 (principal.subject, consumer_id),
             ).fetchone()
             current = int(row[0]) if row else 0
+            if ledger_kind == CURSOR_PURPOSE_UNKNOWN and sequence > current:
+                raise CursorRefreshRequiredError(
+                    "cursor predates inbox-purpose binding; fetch the inbox again"
+                )
             advanced = sequence > current
             new_value = max(current, sequence)
             if advanced:
-                receipt_rows = conn.execute(
-                    "SELECT * FROM deliveries WHERE recipient=? AND sequence>? AND sequence<=? ORDER BY sequence",
-                    (principal.subject, current, new_value),
+                issued_items = conn.execute(
+                    """
+                    SELECT delivery_id, sequence FROM issued_cursor_items
+                    WHERE cursor_hash=? ORDER BY sequence
+                    """,
+                    (cursor_hash,),
                 ).fetchall()
+                receipt_rows: list[sqlite3.Row] = []
+                for issued_item in issued_items:
+                    if ledger_model == DELIVERY_MODEL_V1:
+                        delivery = conn.execute(
+                            """
+                            SELECT logical_deliveries.*
+                            FROM delivery_aliases
+                            JOIN logical_deliveries
+                              ON logical_deliveries.delivery_id=delivery_aliases.delivery_id
+                            WHERE delivery_aliases.legacy_delivery_id=?
+                            """,
+                            (issued_item["delivery_id"],),
+                        ).fetchone()
+                    else:
+                        delivery = conn.execute(
+                            "SELECT * FROM logical_deliveries WHERE delivery_id=?",
+                            (issued_item["delivery_id"],),
+                        ).fetchone()
+                    if (
+                        delivery is not None
+                        and (
+                            ledger_model == DELIVERY_MODEL_V2
+                            or new_value >= int(delivery["sequence"])
+                        )
+                        and delivery not in receipt_rows
+                    ):
+                        receipt_rows.append(delivery)
                 for delivery in receipt_rows:
                     delivery_trace_id = delivery["trace_id"] or f"trace_delivery_{hashlib.sha256(delivery['note_id'].encode()).hexdigest()[:16]}"
                     self._insert_receipt_conn(
                         conn, delivery_trace_id, "ack", delivery["delivery_id"], principal.subject, "acknowledged",
                         {"consumerId": consumer_id, "sequence": delivery["sequence"]},
+                    )
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO logical_ack_receipts(
+                            principal, consumer_id, delivery_id, sequence,
+                            acknowledged_at, cursor_hash
+                        ) VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            principal.subject,
+                            consumer_id,
+                            delivery["delivery_id"],
+                            int(delivery["sequence"]),
+                            self.now(),
+                            cursor_hash,
+                        ),
                     )
             conn.execute(
                 """
@@ -1004,12 +1596,24 @@ class MemoryService:
                 (principal.subject, consumer_id, new_value, self.now()),
             )
         _hit_failpoint(failpoint, "after_ack_commit_before_response")
-        return {"consumerId": consumer_id, "acked": advanced, "cursor": self._issue_cursor(principal.subject, consumer_id, new_value)}
+        return {"consumerId": consumer_id, "acked": advanced, "cursor": cursor}
 
-    def wakeup(self, principal: Principal, consumer_id: str, *, budget_bytes: int = 65_536) -> dict[str, Any]:
-        if budget_bytes < 256 or budget_bytes > 65_536:
-            raise MemoryError("wakeup budget must be between 256 and 65536 UTF-8 bytes")
-        fetched = self.fetch_inbox(principal, consumer_id)
+    def wakeup(
+        self,
+        principal: Principal,
+        consumer_id: str,
+        *,
+        budget_bytes: int = 65_536,
+        delivery_model: str = DELIVERY_MODEL_V2,
+    ) -> dict[str, Any]:
+        if budget_bytes < 1024 or budget_bytes > 65_536:
+            raise MemoryError("wakeup budget must be between 1024 and 65536 UTF-8 bytes")
+        fetched = self.fetch_inbox(
+            principal,
+            consumer_id,
+            delivery_model=delivery_model,
+            issue_cursor=False,
+        )
         history = self.timeline(principal, include_superseded=False, limit=100)
         profiles = [
             note for note in history
@@ -1021,7 +1625,11 @@ class MemoryService:
         for item in fetched["items"]:
             seen_note_ids.add(item["note"]["id"])
             packed = self._wakeup_note_item(item["note"], "inbox")
-            packed.update({"deliveryId": item["deliveryId"], "reason": item["reason"]})
+            packed["deliveryId"] = item["deliveryId"]
+            if delivery_model == DELIVERY_MODEL_V1:
+                packed["reason"] = item["reason"]
+            else:
+                packed["reasons"] = item["reasons"]
             inbox_items.append(packed)
         participated = [
             note for note in history
@@ -1037,32 +1645,97 @@ class MemoryService:
             ("recent", recent_items),
             ("activeTasks", active_task_items),
         ]
+        external_more = {
+            "profile": False,
+            "inbox": bool(fetched.get("hasMore")),
+            "recent": False,
+            "activeTasks": False,
+        }
         envelope: dict[str, Any] = {
             "role": "data",
             "trust": "untrusted-memory",
             "consumerId": consumer_id,
-            "cursor": fetched["cursor"],
-            "sections": [{"kind": kind, "items": []} for kind, _ in section_candidates],
+            "sections": [
+                {"kind": kind, "items": [], "hasMore": False}
+                for kind, _ in section_candidates
+            ],
             "items": [],
             "truncated": False,
+            "nextAction": None,
+            "truncation": {
+                "reasons": [],
+                "sections": {},
+                "nextAction": None,
+            },
         }
+        def refresh_truncation(value: dict[str, Any]) -> None:
+            section_status: dict[str, dict[str, Any]] = {}
+            has_omission = False
+            byte_omission = False
+            item_limit_omission = False
+            for section, (kind, candidates) in zip(
+                value["sections"], section_candidates
+            ):
+                included = len(section["items"])
+                omitted_candidates = included < len(candidates)
+                has_more = omitted_candidates or external_more[kind]
+                section["hasMore"] = has_more
+                has_omission = has_omission or has_more
+                byte_omission = byte_omission or omitted_candidates
+                item_limit_omission = (
+                    item_limit_omission or external_more[kind]
+                )
+                section_status[kind] = {
+                    "included": included,
+                    "hasMore": has_more,
+                }
+            value["truncated"] = has_omission
+            value["nextAction"] = "read-inbox" if has_omission else None
+            reasons: list[str] = []
+            if byte_omission:
+                reasons.append("byte-budget")
+            if item_limit_omission:
+                reasons.append("item-limit")
+            value["truncation"] = {
+                "reasons": reasons,
+                "sections": section_status,
+                "nextAction": "read-inbox" if has_omission else None,
+            }
+
+        refresh_truncation(envelope)
+        budget_exhausted = False
         for section_index, (_, candidates) in enumerate(section_candidates):
             for candidate in candidates:
                 proposed = json.loads(json_dumps(envelope))
                 proposed["sections"][section_index]["items"].append(candidate)
                 if section_index == 1:
                     proposed["items"].append(candidate)
+                refresh_truncation(proposed)
                 if len(json_dumps(proposed).encode("utf-8")) > budget_bytes:
-                    envelope["truncated"] = True
+                    budget_exhausted = True
                     break
                 envelope = proposed
-            if envelope["truncated"]:
+            if budget_exhausted:
                 break
         if len(json_dumps(envelope).encode("utf-8")) > budget_bytes:
             envelope = {
                 "role": "data", "trust": "untrusted-memory",
-                "sections": [{"kind": kind, "items": []} for kind, _ in section_candidates],
-                "items": [], "truncated": True,
+                "consumerId": consumer_id,
+                "sections": [
+                    {"kind": kind, "items": [], "hasMore": bool(candidates)}
+                    for kind, candidates in section_candidates
+                ],
+                "items": [],
+                "truncated": True,
+                "nextAction": "read-inbox",
+                "truncation": {
+                    "reasons": ["byte-budget"],
+                    "sections": {
+                        kind: {"included": 0, "hasMore": bool(candidates)}
+                        for kind, candidates in section_candidates
+                    },
+                    "nextAction": "read-inbox",
+                },
             }
         return envelope
 
@@ -1268,6 +1941,168 @@ class MemoryService:
         if not self._can_read(principal, note):
             raise KeyError(f"note not found: {note_id}")
         return note
+
+    def note_lifecycle(self, note_id: str, principal: Principal) -> dict[str, Any]:
+        """Project authorized operational facts without inventing a linear state."""
+        self.init()
+        note = self._read_authoritative(note_id)
+        admin = principal.has("memory.admin")
+        author = note["author"] == principal.subject
+        with self._connect(self.ops_path) as conn:
+            delivery_rows = conn.execute(
+                "SELECT * FROM logical_deliveries WHERE note_id=? ORDER BY sequence",
+                (note_id,),
+            ).fetchall()
+            recipient = any(row["recipient"] == principal.subject for row in delivery_rows)
+            if not (admin or author or recipient):
+                raise KeyError(f"note not found: {note_id}")
+            visible_deliveries = [
+                row
+                for row in delivery_rows
+                if admin or author or row["recipient"] == principal.subject
+            ]
+            delivery_facts: list[dict[str, Any]] = []
+            for row in visible_deliveries:
+                reasons = [
+                    reason["reason"]
+                    for reason in conn.execute(
+                        """
+                        SELECT reason FROM logical_delivery_reasons
+                        WHERE delivery_id=? ORDER BY reason
+                        """,
+                        (row["delivery_id"],),
+                    ).fetchall()
+                ]
+                if admin:
+                    ack_rows = conn.execute(
+                        """
+                        SELECT consumer_id, acknowledged_at
+                        FROM logical_ack_receipts
+                        WHERE principal=? AND delivery_id=?
+                        ORDER BY consumer_id
+                        """,
+                        (row["recipient"], row["delivery_id"]),
+                    ).fetchall()
+                elif row["recipient"] == principal.subject:
+                    ack_rows = conn.execute(
+                        """
+                        SELECT consumer_id, acknowledged_at
+                        FROM logical_ack_receipts
+                        WHERE principal=? AND delivery_id=?
+                        ORDER BY consumer_id
+                        """,
+                        (principal.subject, row["delivery_id"]),
+                    ).fetchall()
+                else:
+                    ack_rows = conn.execute(
+                        """
+                        SELECT NULL AS consumer_id, MIN(acknowledged_at) AS acknowledged_at
+                        FROM logical_ack_receipts WHERE delivery_id=?
+                        HAVING COUNT(*) > 0
+                        """,
+                        (row["delivery_id"],),
+                    ).fetchall()
+                acknowledgements = [
+                    {
+                        "consumerId": ack["consumer_id"],
+                        "acknowledgedAt": ack["acknowledged_at"],
+                    }
+                    for ack in ack_rows
+                ]
+                if not acknowledgements:
+                    if admin or row["recipient"] == principal.subject:
+                        historical_rows = conn.execute(
+                            """
+                            SELECT consumer_id, NULL AS acknowledged_at
+                            FROM consumer_cursors
+                            WHERE principal=? AND acked_sequence>=?
+                            ORDER BY consumer_id
+                            """,
+                            (row["recipient"], int(row["sequence"])),
+                        ).fetchall()
+                        acknowledgements = [
+                            {
+                                "consumerId": historical["consumer_id"],
+                                "acknowledgedAt": None,
+                            }
+                            for historical in historical_rows
+                        ]
+                    else:
+                        historical = conn.execute(
+                            """
+                            SELECT NULL AS consumer_id, NULL AS acknowledged_at
+                            FROM consumer_cursors
+                            WHERE principal=? AND acked_sequence>=?
+                            LIMIT 1
+                            """,
+                            (row["recipient"], int(row["sequence"])),
+                        ).fetchone()
+                        if historical is not None:
+                            acknowledgements = [
+                                {
+                                    "consumerId": None,
+                                    "acknowledgedAt": None,
+                                }
+                            ]
+                fact: dict[str, Any] = {
+                    "deliveryId": row["delivery_id"],
+                    "sequence": int(row["sequence"]),
+                    "reasons": reasons,
+                    "queuedAt": row["created_at"],
+                    "acknowledged": bool(acknowledgements),
+                }
+                if admin or row["recipient"] == principal.subject:
+                    fact["recipient"] = row["recipient"]
+                if admin:
+                    fact["acknowledgements"] = acknowledgements
+                elif row["recipient"] == principal.subject:
+                    fact["acknowledgements"] = acknowledgements
+                elif acknowledgements:
+                    fact["acknowledgedAt"] = acknowledgements[0][
+                        "acknowledgedAt"
+                    ]
+                delivery_facts.append(fact)
+        with self._connect(self.index_path) as conn:
+            indexed = conn.execute(
+                "SELECT revision, content_hash FROM manifest WHERE note_id=?",
+                (note_id,),
+            ).fetchone()
+        valid, _ = self._scan_notes()
+        linked: list[dict[str, Any]] = []
+        targets = {note_id, f"note:{note_id}"}
+        for candidate, _ in valid.values():
+            if candidate["id"] == note_id or not self._can_read(principal, candidate):
+                continue
+            for relation in candidate.get("relations") or []:
+                if relation.get("target") in targets:
+                    linked.append(
+                        {
+                            "noteId": candidate["id"],
+                            "relationType": relation["type"],
+                            "recordedAt": candidate["recordedAt"],
+                        }
+                    )
+        linked.sort(key=lambda item: (item["recordedAt"], item["noteId"]))
+        return {
+            "schema": "a2a-superhub.memory.lifecycle.v1",
+            "noteId": note_id,
+            "facts": {
+                "stored": {
+                    "recordedAt": note["recordedAt"],
+                    "author": note["author"] if admin or author else None,
+                },
+                "indexed": (
+                    {
+                        "revision": int(indexed["revision"]),
+                        "contentHash": indexed["content_hash"],
+                    }
+                    if indexed
+                    else None
+                ),
+                "deliveries": delivery_facts,
+                "linkedReferences": linked,
+            },
+        }
 
     def remove_derived_note(self, note_id: str, principal: Principal) -> None:
         """Remove only a deriver-produced note and its rebuildable indexes."""
@@ -1690,7 +2525,15 @@ class MemoryService:
         with self._connect(self.ops_path) as conn:
             queue_depth = int(conn.execute("SELECT COUNT(*) FROM jobs WHERE state IN ('pending','running')").fetchone()[0])
             quarantine_count = int(conn.execute("SELECT COUNT(*) FROM quarantine WHERE state='active'").fetchone()[0])
-            delivery_backlog = int(conn.execute("SELECT COUNT(*) FROM deliveries").fetchone()[0])
+            logical_deliveries = int(
+                conn.execute("SELECT COUNT(*) FROM logical_deliveries").fetchone()[0]
+            )
+            legacy_route_matches = int(
+                conn.execute("SELECT COUNT(*) FROM deliveries").fetchone()[0]
+            )
+            logical_ack_receipts = int(
+                conn.execute("SELECT COUNT(*) FROM logical_ack_receipts").fetchone()[0]
+            )
             receipt_count = int(conn.execute("SELECT COUNT(*) FROM receipts").fetchone()[0])
         with self._connect(self.index_path) as conn:
             note_count = int(conn.execute("SELECT COUNT(*) FROM manifest").fetchone()[0])
@@ -1705,7 +2548,10 @@ class MemoryService:
             "indexRevision": index_revision,
             "indexedNotes": note_count,
             "quarantineCount": quarantine_count,
-            "deliveryBacklog": delivery_backlog,
+            "deliveryBacklog": logical_deliveries,
+            "logicalDeliveries": logical_deliveries,
+            "legacyRouteMatches": legacy_route_matches,
+            "logicalAckReceipts": logical_ack_receipts,
             "receiptCount": receipt_count,
             "degraded": degraded,
         }

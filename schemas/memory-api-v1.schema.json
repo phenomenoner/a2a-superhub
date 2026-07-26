@@ -193,7 +193,9 @@
           "items": false
         },
         "items": {"type": "array", "items": {"$ref": "#/$defs/wakeupNoteItem"}},
-        "truncated": {"type": "boolean"}
+        "truncated": {"type": "boolean"},
+        "nextAction": {"type": ["string", "null"], "enum": ["read-inbox", null]},
+        "truncation": {"$ref": "#/$defs/wakeupTruncation"}
       }
     },
     "wakeupNoteItem": {
@@ -230,10 +232,39 @@
         }
       }
     },
-    "wakeupProfileSection": {"type": "object", "additionalProperties": false, "required": ["kind", "items"], "properties": {"kind": {"const": "profile"}, "items": {"type": "array", "items": {"$ref": "#/$defs/wakeupNoteItem"}}}},
-    "wakeupInboxSection": {"type": "object", "additionalProperties": false, "required": ["kind", "items"], "properties": {"kind": {"const": "inbox"}, "items": {"type": "array", "items": {"$ref": "#/$defs/wakeupNoteItem"}}}},
-    "wakeupRecentSection": {"type": "object", "additionalProperties": false, "required": ["kind", "items"], "properties": {"kind": {"const": "recent"}, "items": {"type": "array", "items": {"$ref": "#/$defs/wakeupNoteItem"}}}},
-    "wakeupTaskSection": {"type": "object", "additionalProperties": false, "required": ["kind", "items"], "properties": {"kind": {"const": "activeTasks"}, "items": {"type": "array", "items": {"$ref": "#/$defs/wakeupTaskItem"}}}},
+    "wakeupProfileSection": {"type": "object", "additionalProperties": false, "required": ["kind", "items", "hasMore"], "properties": {"kind": {"const": "profile"}, "items": {"type": "array", "items": {"$ref": "#/$defs/wakeupNoteItem"}}, "hasMore": {"type": "boolean"}}},
+    "wakeupInboxSection": {"type": "object", "additionalProperties": false, "required": ["kind", "items", "hasMore"], "properties": {"kind": {"const": "inbox"}, "items": {"type": "array", "items": {"$ref": "#/$defs/wakeupNoteItem"}}, "hasMore": {"type": "boolean"}}},
+    "wakeupRecentSection": {"type": "object", "additionalProperties": false, "required": ["kind", "items", "hasMore"], "properties": {"kind": {"const": "recent"}, "items": {"type": "array", "items": {"$ref": "#/$defs/wakeupNoteItem"}}, "hasMore": {"type": "boolean"}}},
+    "wakeupTaskSection": {"type": "object", "additionalProperties": false, "required": ["kind", "items", "hasMore"], "properties": {"kind": {"const": "activeTasks"}, "items": {"type": "array", "items": {"$ref": "#/$defs/wakeupTaskItem"}}, "hasMore": {"type": "boolean"}}},
+    "sectionOmission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["included", "hasMore"],
+      "properties": {
+        "included": {"type": "integer", "minimum": 0},
+        "hasMore": {"type": "boolean"}
+      }
+    },
+    "wakeupTruncation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reasons", "sections", "nextAction"],
+      "properties": {
+        "reasons": {"type": "array", "uniqueItems": true, "items": {"enum": ["byte-budget", "item-limit"]}},
+        "sections": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["profile", "inbox", "recent", "activeTasks"],
+          "properties": {
+            "profile": {"$ref": "#/$defs/sectionOmission"},
+            "inbox": {"$ref": "#/$defs/sectionOmission"},
+            "recent": {"$ref": "#/$defs/sectionOmission"},
+            "activeTasks": {"$ref": "#/$defs/sectionOmission"}
+          }
+        },
+        "nextAction": {"type": ["string", "null"], "enum": ["read-inbox", null]}
+      }
+    },
     "errorEnvelope": {
       "type": "object",
       "additionalProperties": false,
@@ -244,7 +275,7 @@
           "additionalProperties": false,
           "required": ["code", "message", "retryable"],
           "properties": {
-            "code": {"enum": ["INVALID_REQUEST", "REQUEST_TOO_LARGE", "AUTH_REQUIRED", "SCOPE_DENIED", "NOT_FOUND", "IDEMPOTENCY_CONFLICT", "CURSOR_INVALID", "REVISION_STALE", "INTERNAL_ERROR"]},
+            "code": {"enum": ["INVALID_REQUEST", "REQUEST_TOO_LARGE", "AUTH_REQUIRED", "SCOPE_DENIED", "NOT_FOUND", "IDEMPOTENCY_CONFLICT", "CURSOR_INVALID", "CURSOR_REFRESH_REQUIRED", "REVISION_STALE", "RATE_LIMITED", "INTERNAL_ERROR"]},
             "message": {"type": "string", "minLength": 1, "maxLength": 512},
             "retryable": {"type": "boolean"},
             "details": {"type": "object"}

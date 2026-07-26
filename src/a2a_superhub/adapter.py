@@ -108,9 +108,8 @@ class ReferenceAdapter:
         pack = self.client.wakeup(self.consumer_id, budget_bytes=budget_bytes)
         if pack.get("role") != "data" or pack.get("trust") != "untrusted-memory":
             raise RoleBoundaryError("server wakeup envelope violates the untrusted data boundary")
-        cursor = pack.get("cursor")
-        if not isinstance(cursor, str) or not cursor:
-            raise AdapterError("wakeup response did not include an acknowledgeable cursor")
+        if "cursor" in pack:
+            raise AdapterError("wakeup preview must not include an acknowledgeable cursor")
         block = {
             "role": "data",
             "trust": "untrusted-memory",
@@ -122,7 +121,7 @@ class ReferenceAdapter:
             "provenance": {"source": "a2a-superhub", "principal": self.principal, "consumerId": self.consumer_id},
         }
         deliver(block)
-        ack = self.client.ack_inbox(self.consumer_id, cursor)
+        ack = {"performed": False, "reason": "wakeup-preview"}
         return {"context": block, "ack": ack, "capabilities": capabilities}
 
     @staticmethod

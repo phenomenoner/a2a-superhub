@@ -48,7 +48,7 @@ jobs:
   release-artifacts:
     runs-on: ubuntu-latest
     env:
-      A2A_PREVIOUS_RELEASE_REF: 71b55e683ad469552f00acde9d82e08f381aa4ad
+      A2A_PREVIOUS_RELEASE_REF: e33989b6c592f7fac9de6fe992818ff9d00a718f
     steps:
       - uses: actions/checkout@v4
         with:

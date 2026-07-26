@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://phenomenoner.github.io/a2a-superhub/schemas/capabilities-v2.schema.json",
+  "title": "A2A Superhub capabilities v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "memoryFoundation",
+    "memorySharing",
+    "timelineGraph",
+    "safeWakeup",
+    "taskLog",
+    "watcherSideEffects",
+    "runtimeWatcher",
+    "adapter",
+    "memoryFull",
+    "memorySearch",
+    "artifactUploads",
+    "a2aPartMapping",
+    "maxArtifactBytes",
+    "artifactDerivation",
+    "derivedTextTrust",
+    "operationalDiagnostics",
+    "offlineAuthoritativeBackup",
+    "recoverableRetention",
+    "retrieval",
+    "principal",
+    "memoryContract",
+    "deliveryModel",
+    "wakeupAckMode",
+    "ackCursorSource",
+    "lifecycleProjection"
+  ],
+  "properties": {
+    "schema": {"const": "a2a-superhub.capabilities.v2"},
+    "memoryFoundation": {"type": "boolean"},
+    "memorySharing": {"type": "boolean"},
+    "timelineGraph": {"type": "boolean"},
+    "safeWakeup": {"type": "boolean"},
+    "taskLog": {"type": "boolean"},
+    "watcherSideEffects": {"type": "boolean"},
+    "runtimeWatcher": {"type": "boolean"},
+    "adapter": {"type": "boolean"},
+    "memoryFull": {"const": false},
+    "memorySearch": {"enum": ["keyword", "hybrid"]},
+    "artifactUploads": {
+      "type": "array",
+      "prefixItems": [
+        {"const": "base64-json"},
+        {"const": "raw-binary"},
+        {"const": "resumable-chunks"}
+      ],
+      "items": false
+    },
+    "a2aPartMapping": {
+      "type": "array",
+      "prefixItems": [
+        {"const": "text"},
+        {"const": "raw"},
+        {"const": "url"},
+        {"const": "data"}
+      ],
+      "items": false
+    },
+    "maxArtifactBytes": {"type": "integer", "minimum": 1},
+    "artifactDerivation": {"type": "boolean"},
+    "derivedTextTrust": {"const": "untrusted-data"},
+    "operationalDiagnostics": {"type": "boolean"},
+    "offlineAuthoritativeBackup": {"type": "boolean"},
+    "recoverableRetention": {"type": "boolean"},
+    "retrieval": {
+      "type": "object",
+      "required": ["provider"],
+      "properties": {
+        "provider": {"enum": ["keyword", "qdrant"]}
+      }
+    },
+    "principal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["subject", "kind", "tokenId", "scopes"],
+      "properties": {
+        "subject": {"type": "string"},
+        "kind": {"enum": ["agent", "human", "service", "operator"]},
+        "tokenId": {"type": "string"},
+        "scopes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "memoryContract": {"const": "v2"},
+    "deliveryModel": {"const": "logical.v2"},
+    "wakeupAckMode": {"const": "none"},
+    "ackCursorSource": {"const": "inbox-only"},
+    "lifecycleProjection": {"type": "boolean"}
+  }
+}

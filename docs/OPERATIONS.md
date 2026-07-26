@@ -1,10 +1,31 @@
 # Operational controls
 
-A2A Superhub 0.2 adds local, explicit controls for authoritative backup and
+A2A Superhub 0.3 provides local, explicit controls for authoritative backup and
 clean restore, recoverable retention, payload-free diagnostics, and Qdrant
 local-to-server migration. These controls do not turn a source checkout into a
 managed service: operators still own scheduling, encrypted custody, monitoring,
 capacity limits, and deployment rollback.
+
+## Memory schema upgrade and rollback boundary
+
+Starting 0.3.0, `memory-ops.sqlite` schema version 4 stores logical deliveries,
+per-reason compatibility aliases, exact inbox-page cursor membership, and
+logical acknowledgement receipts. Startup acquires the exclusive state lease
+before inspecting or migrating this database. A schema newer than the running
+binary understands is rejected; it is never guessed or rewritten.
+
+Before first starting 0.3.0 against an older state root, stop the current hub and
+create and verify an authoritative backup. Until the upgraded state has been
+opened, restoring that backup and starting the older package remains a valid
+rollback. Once version 4 has been opened or written, recovery is
+**forward-only**: keep the version 4 state intact and repair or upgrade with a
+version 4-aware binary. Never start a 0.2.x binary against version 4 state.
+
+Version 0.3.x continues to dual-write the older per-reason delivery rows so
+read-only 0.2.x discovery and the `/v1` compatibility surface remain observable.
+That dual-write is a compatibility aid, not permission to downgrade the state
+in place. The earliest allowed removal of the compatibility rows and `/v1`
+delivery shape is a separately versioned 0.4.0 change.
 
 ## Authority and maintenance boundary
 
@@ -75,7 +96,7 @@ its idempotency key or a read-back to resolve an uncertain response.
 | Task/event SQLite state | included | restored and read directly |
 | Artifact manifests and content-addressed blobs | included | restored and checksum-verified |
 | Markdown memory notes | included | restored as source of truth |
-| Delivery cursors, jobs, receipts, and retention tombstones | included | restored with their SQLite state |
+| Logical deliveries, compatibility aliases, exact-page cursors, jobs, acknowledgement receipts, and retention tombstones | included | restored with their SQLite state |
 | Requested principal registry | included as secret | restored under `config/principals.json` |
 | FTS/KG SQLite index | excluded as derived | rebuilt from Markdown |
 | Local/server Qdrant collections and rebuild markers | excluded as derived | rebuilt by an explicit migration/reindex operation |
@@ -128,7 +149,7 @@ a2a-superhub --state ./state operations retention list
 a2a-superhub --state ./state operations retention restore memory-note mem_...
 ```
 
-A note with any unacknowledged delivery is retained. Private/direct objects need
+A note with any unacknowledged logical delivery is retained. Private/direct objects need
 the separate `--allow-private` authority flag. An artifact manifest cannot be
 trashed while authoritative memory references it, and its content-addressed blob
 is retained. Restore verifies the tombstoned file hash and refuses to overwrite

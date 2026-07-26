@@ -14,6 +14,7 @@
 
 **[Product site](https://phenomenoner.github.io/a2a-superhub/)** ·
 **[Shared memory design and implemented surfaces](docs/DESIGN.md)** ·
+[Agent user guide](docs/AGENT_USER_GUIDE.md) ·
 [Local agent operations](docs/LOCAL_AGENT_OPERATIONS.md) · [API](docs/API.md) ·
 [Operations](docs/OPERATIONS.md) · [Adapters](docs/ADAPTERS.md) · [Security](docs/SECURITY.md)
 
@@ -37,8 +38,8 @@ Superhub attacks all three with one small, local-first hub.
 
 | Plane | Status | What it gives you |
 |---|---|---|
-| **Coordination plane** | ✅ Shipped (v1) | Durable task lifecycle, progress events, content-addressed artifacts, Agent Card registry, idempotency, bearer auth, rate limits. Dependency-free Python + SQLite. |
-| **Memory plane** | ✅ MCP-integrated foundation (opt-in) + [future design](docs/DESIGN.md) | Implemented Markdown truth, durable ops queue, FTS5 fallback, FastEmbed/Qdrant hybrid retrieval, authorized timeline/graph, multi-consumer inbox, safe wakeup, task-log, a stateless 10-tool MCP stdio sidecar, reference adapter, operator Skill, optional PDF/image text derivation, and offline operational controls. A complete A2A 1.0 binding remains future work; the supported operational workload waits for published package/rollback and 24-hour soak evidence. |
+| **Coordination plane** | v1 source surface | Durable task lifecycle, progress events, content-addressed artifacts, Agent Card registry, idempotency, bearer auth, and rate limits. Dependency-free Python + SQLite. |
+| **Memory plane** | 0.3.0 source contract (opt-in) | `memory.v2` logical delivery, exact inbox ACK, bounded wakeup preview, safe typed errors, authorized lifecycle facts, Markdown truth, FTS5 fallback, optional hybrid retrieval, and an MCP stdio sidecar. This is a repository-source description, not a package-release, live-deployment, SLA, or supported-workload claim. |
 
 Agents remain peers, not children of a central framework. The hub owns
 cross-agent semantics; adapters own local runtime integration.
@@ -48,8 +49,9 @@ cross-agent semantics; adapters own local runtime integration.
 > **Monday 09:12** — you tell Agent A: *"B's gateway keeps dropping tokens after
 > restarts."* Agent A writes a memory note tagged `about: [agent.beta]`.
 >
-> **Thursday 03:40** — Agent B wakes up, pulls its memory inbox, and **already
-> knows** — with full provenance: who said it, when, in which task.
+> **Thursday 03:40** — Agent B wakes up, pulls its memory inbox, and can
+> retrieve the original note with full provenance: who said it, when, and in
+> which task.
 
 ```mermaid
 sequenceDiagram
@@ -59,20 +61,25 @@ sequenceDiagram
   participant B as Agent B (offline)
 
   U->>A: "B's gateway keeps dropping tokens"
-  A->>H: POST /v1/memory/notes {type: observation, about: [agent.beta], body: verbatim}
-  H->>H: markdown note → SQLite FTS index → inbox/agent.beta
+  A->>H: POST /v2/memory/notes {type: observation, about: [agent.beta], body: verbatim}
+  H->>H: markdown note → SQLite FTS index → logical delivery for agent.beta
   Note over B: ...days later, B starts a session...
-  B->>H: GET /v1/memory/wakeup?consumerId=desktop.startup
-  H-->>B: profile + unread inbox (the observation, with provenance)
-  Note over B: B now has delimited, provenance-rich data and opt-in hybrid search.
+  B->>H: GET /v2/memory/wakeup?consumerId=desktop.startup
+  H-->>B: bounded preview, no acknowledgeable cursor
+  B->>H: GET /v2/memory/inbox?consumerId=desktop.startup
+  H-->>B: one logical item + reasons + exact page cursor
+  B->>H: POST /v2/memory/inbox/ack after the page is accepted
+  Note over B: B now has provenance-rich data and opt-in hybrid search.
 ```
 
 Memory sharing becomes **asynchronous message passing**: writing is delivery,
 querying is catching up. No agent has to be online at the same time as any other.
 
-## Current implemented surfaces
+## Current repository surfaces
 
-Shipped and tested; the coordination core remains dependency-free:
+The source tree currently includes the following surfaces. Their presence does
+not by itself claim a published release, production deployment, or operational
+readiness; the coordination core remains dependency-free:
 
 - Standalone state root with SQLite task and event storage.
 - Task create / get / list / cancel / event operations with idempotency keys.
@@ -140,7 +147,7 @@ On Windows PowerShell, set the variables with `$env:A2A_SUPERHUB_URL=...` and
 MCP command line. Each sidecar holds no hub state and can be restarted or run
 alongside other clients.
 
-## Memory plane: 🧱 Foundation (opt-in)
+## Memory plane: 0.3.0 hardening contract (opt-in)
 
 The full design is public — **[docs/DESIGN.md](docs/DESIGN.md)**. Durable memory is available
 only with `pip install -e ".[memory-core]"` and `serve --enable-memory`; it is
@@ -148,6 +155,44 @@ off by default and preserves the coordination-only runtime. Delivery, task-log,
 and watcher repair remain separately gated. The foundation has repository-level
 end-to-end and restart/replay coverage; it is not a release, SLA, soak, or
 operational-readiness claim. The short version:
+
+### Memory v2 behavior and compatibility
+
+Version 0.3.0 makes `memory.v2` the current HTTP, client, and MCP memory-sharing
+surface:
+
+- **One logical delivery per note and recipient.** If a note matches `about`,
+  `direct`, and `handoff`, v2 returns one inbox item with a bounded, deduplicated
+  `reasons` array. Delivery identity no longer depends on a single reason.
+- **Wakeup is preview-only.** `/v2/memory/wakeup` is byte-bounded, reports
+  section-level `hasMore`, and never returns an acknowledgeable cursor.
+- **Only an exact inbox page can be acknowledged.** Fetch
+  `/v2/memory/inbox`, deliver that page to the intended consumer, then send its
+  cursor to `/v2/memory/inbox/ack`. Preview assembly, transport failure, and
+  process restart do not change durable unread state.
+- **Typed failures remain safe across transports.** HTTP, `HubClient`, and MCP
+  preserve code, safe message, retryability, bounded validation details, and a
+  trace ID. Submitted values, credentials, cursors, and filesystem locations
+  are not validation details.
+- **Lifecycle is a set of authorized facts.** Stored, indexed, queued,
+  acknowledged, and linked-reference facts are independently projected. They
+  never claim that a receiver understood, accepted, or executed a note.
+
+The v1 endpoints continue to write and serve their per-reason compatibility
+projection throughout 0.3.x; 0.4.0 is the earliest version that may remove it.
+Stored Markdown remains `a2a-superhub.memory.note.v1`, so existing notes are not
+rewritten. New v2 writes require typed relation targets such as `agent:`,
+`note:`, `project:`, `task:`, `event:`, or `artifact:`. See
+[Memory sharing v2 compatibility and state migration](docs/MEMORY_V2_COMPATIBILITY.md)
+for cursor migration and rollback boundaries.
+
+Operational limits are explicit: HTTP JSON bodies are at most 1 MiB; note
+bodies are at most 262,144 UTF-8 bytes; titles are at most 256 code points;
+search and inbox pages are capped at 100 items; and the complete wakeup envelope
+is at most 65,536 UTF-8 bytes. Artifact uploads default to a 64 MiB cap, and
+inline raw artifact parts are capped at 262,144 bytes. Memory, delivery,
+task-log, watcher side effects, hybrid retrieval, and artifact derivation remain
+opt-in as separately declared.
 
 **Three ingredients, deliberately boring:**
 
@@ -167,14 +212,15 @@ operational-readiness claim. The short version:
 - **Knowledge graph + timeline** — entities (agents, humans, projects, topics,
   tasks, artifacts) and typed, timestamped edges in SQLite. Interaction context
   ("who said what about whom, when, in which task") is a query, not an inference.
-- **Wake-up packs** — one call returns an agent's boot context: profile, unread
-  inbox, recent relevant notes. Worst-case integration is `curl` + paste.
+- **Wake-up packs** — one preview call returns bounded profile, inbox, recent,
+  and active-task context without an ACK cursor. When anything is omitted, the
+  response points the caller to the exact inbox read path.
 - **Task-log sedimentation** — when explicitly enabled for an allowlisted intent,
   terminal hub tasks can become structured memory notes without raw payloads.
 - **MCP sidecar + reference adapter + operator Skill** — ten stable tools and
   two `memory://` resources reuse the HTTP authorization boundary; a removable client adapter negotiates
-  identity/capabilities, inserts only delimited untrusted data, and acks only
-  after delivery. The packaged Skill provides private local bootstrap,
+  identity/capabilities, inserts only delimited untrusted data, and acknowledges
+  only an exact inbox page after delivery. The packaged Skill provides local bootstrap,
   identity-bound MCP launch, doctor, smoke, and install workflows.
 - **Searchable artifact text** — when explicitly enabled, bounded PDF extraction
   and image OCR create a clearly labeled untrusted Markdown note. Every read and
@@ -197,7 +243,7 @@ operational-readiness claim. The short version:
 Memory frameworks remember *users*. State layers share *the present*. Superhub
 gives a fleet of peer agents a durable, queryable, **shared past**.
 
-The implemented surface has repository end-to-end, restart/replay, official MCP
+The source surface has repository end-to-end, restart/replay, official MCP
 SDK, artifact transport/derivation, and cross-transport evidence. It does not
 mean complete A2A 1.0 parity, production deployment, operational soak, audio
 transcription, or image captioning.
@@ -207,16 +253,17 @@ transcription, or image captioning.
 - **Contract and security baseline — 🧱 Foundation:** executable identity,
   note, API, protocol, package, and Skill contracts.
 - **Durable memory and offline sharing — 🧱 Foundation (opt-in):** durable
-  Markdown, separated operational/derived stores, FTS, inbox/wakeup, a reference
-  adapter, and an operator Skill.
+  Markdown note v1, logical-delivery memory v2, exact inbox ACK, preview-only
+  wakeup, separated operational/derived stores, FTS, a reference adapter, and
+  an operator Skill. Per-reason v1 compatibility remains through 0.3.x.
 - **Hybrid retrieval — 🧱 Foundation (opt-in):** Qdrant dense+sparse retrieval
   with authorization pushdown and keyword fallback.
-- **MCP agent integration — ✅ Implemented (opt-in):** ten stable memory/task
+- **MCP agent integration — implemented in source (opt-in):** ten stable memory/task
   tools, authorized resources, negotiated subscriptions with poll fallback,
   cross-transport scenarios, and Skill/product drift CI.
 - **A2A 1.0 runtime binding — 📐 Design RFC:** a standards-compliant binding
   remains separate from the legacy JSON-RPC coordination facade.
-- **Artifact text derivation — ✅ Implemented (opt-in):** bounded PDF extraction,
+- **Artifact text derivation — implemented in source (opt-in):** bounded PDF extraction,
   optional Tesseract OCR, source backlinks, current-ACL enforcement, durable
   idempotent jobs, explicit retry/cancel, and derived-note-only purge.
 - **Additional media providers — 🗺 Planned:** image captioning and audio/video
@@ -235,10 +282,11 @@ Details and acceptance criteria in the [RFC](docs/DESIGN.md).
 
 ## Status & contributing
 
-This project is **contract-first**: coordination plus opt-in durable memory,
-offline sharing, hybrid retrieval, MCP agent integration, and artifact text
-derivation are implemented and tested; the complete A2A 1.0, additional-media,
-operational, and federation surfaces remain incomplete. Read the [RFC](docs/DESIGN.md), the
+This project is **contract-first**: the repository contains coordination plus
+opt-in durable memory, offline sharing, hybrid retrieval, MCP agent integration,
+and artifact text derivation with executable test coverage; the complete A2A
+1.0, additional-media, operational, and federation surfaces remain incomplete.
+Read the [RFC](docs/DESIGN.md), the
 [contract and security decisions](docs/CONTRACT_AND_SECURITY_DECISIONS.md), and the machine schemas before
 opening an issue that starts with *"this breaks when…"*.
 
@@ -258,8 +306,8 @@ python -m unittest discover -s tests -v
 
 This is the canonical clean-development command and is exercised on Windows and
 Linux with Python 3.11 and 3.12 in CI. The `contracts` extra contains test-only
-official A2A/MCP parsers and JSON Schema validation; the v1 hub still has zero
-runtime dependencies. Python 3.13 is not in the supported matrix yet.
+official A2A/MCP parsers and JSON Schema validation; the coordination core still
+has zero runtime dependencies. Python 3.13 is not in the supported matrix yet.
 
 The packaging contract also defines `memory-core`, `search`, `mcp`, `derive`,
 and the `memory` umbrella extra. `memory-core` enables durable memory only when

@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -18,6 +19,73 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = "a2a-superhub.release-gate.v1"
+MEMORY_OPS_SCHEMA_V3 = 3
+MEMORY_OPS_SCHEMA_V4 = 4
+MEMORY_LEGACY_TABLES = frozenset({
+    "deliveries", "consumer_cursors", "issued_cursors", "receipts",
+})
+MEMORY_V4_TABLES = frozenset({
+    "logical_deliveries",
+    "logical_delivery_reasons",
+    "delivery_aliases",
+    "delivery_sequence_state",
+    "delivery_route_snapshots",
+    "logical_ack_receipts",
+    "issued_cursor_items",
+})
+MEMORY_COUNT_TABLES = tuple(sorted(MEMORY_LEGACY_TABLES | MEMORY_V4_TABLES))
+
+_CREATE_V3_MEMORY_FIXTURE = r"""
+import json
+import sys
+from pathlib import Path
+
+from a2a_superhub.auth import Principal
+from a2a_superhub.memory import MemoryService
+
+state = Path(sys.argv[1])
+writer = Principal(
+    "agent.alpha", "agent", "tok_release_writer",
+    frozenset({"memory.read", "memory.write", "memory.share"}),
+)
+receiver = Principal(
+    "agent.beta", "agent", "tok_release_receiver",
+    frozenset({"memory.read"}),
+)
+service = MemoryService(state, enable_delivery=True)
+created = service.create_note(
+    {
+        "type": "handoff",
+        "title": "release gate memory schema fixture",
+        "visibility": "direct:agent.beta",
+        "about": ["agent.beta"],
+        "body": "release gate memory schema fixture",
+    },
+    writer,
+    idempotency_key="release-gate-memory-v3",
+)
+first = service.fetch_inbox(receiver, "release.gate", limit=1)
+service.acknowledge_inbox(receiver, "release.gate", first["cursor"])
+pending = service.fetch_inbox(receiver, "release.gate", limit=100)
+print(json.dumps({
+    "noteId": created.note["id"],
+    "legacyDeliveries": len(service.list_deliveries()),
+    "firstItems": len(first["items"]),
+    "pendingItems": len(pending["items"]),
+}))
+"""
+
+_ACTIVATE_MEMORY_SCHEMA = r"""
+import json
+import sys
+from pathlib import Path
+
+from a2a_superhub.memory import MemoryService
+
+service = MemoryService(Path(sys.argv[1]), enable_delivery=True)
+service.init()
+print(json.dumps({"initialized": True}))
+"""
 
 
 def now() -> str:
@@ -113,6 +181,152 @@ def installed_skill_baseline(codex_home: Path) -> str:
     return str(value.get("productBaseline") or "")
 
 
+def create_authoritative_backup(python: Path, state: Path, destination: Path) -> dict[str, Any]:
+    return parse_json([
+        str(python), "-m", "a2a_superhub", "--state", str(state),
+        "operations", "backup", "create", "--destination", str(destination),
+    ], cwd=ROOT)
+
+
+def restore_authoritative_backup(python: Path, archive: Path, target_state: Path) -> dict[str, Any]:
+    return parse_json([
+        str(python), "-m", "a2a_superhub", "operations", "backup", "restore",
+        "--archive", str(archive), "--target-state", str(target_state),
+    ], cwd=ROOT)
+
+
+def create_v3_memory_fixture(python: Path, state: Path) -> dict[str, Any]:
+    fixture = parse_json(
+        [str(python), "-c", _CREATE_V3_MEMORY_FIXTURE, str(state)],
+        cwd=ROOT,
+    )
+    expected = {"legacyDeliveries": 3, "firstItems": 1, "pendingItems": 2}
+    if any(fixture.get(key) != value for key, value in expected.items()):
+        raise RuntimeError("previous package did not create the expected v3 memory fixture")
+    note_id = fixture.get("noteId")
+    if not isinstance(note_id, str) or not note_id.startswith("mem_"):
+        raise RuntimeError("previous package returned an invalid memory fixture identity")
+    return fixture
+
+
+def activate_memory_schema(python: Path, state: Path) -> None:
+    result = parse_json(
+        [str(python), "-c", _ACTIVATE_MEMORY_SCHEMA, str(state)],
+        cwd=ROOT,
+    )
+    if result.get("initialized") is not True:
+        raise RuntimeError("candidate memory schema initialization did not complete")
+
+
+def read_memory_note(python: Path, state: Path, note_id: str) -> dict[str, Any]:
+    return parse_json([
+        str(python), "-m", "a2a_superhub", "--state", str(state),
+        "memory", "note", "read", note_id,
+    ], cwd=ROOT)
+
+
+def memory_ops_inventory(state: Path) -> dict[str, Any]:
+    database = state / "memory" / "ops.sqlite"
+    if not database.is_file():
+        raise RuntimeError("memory ops database is missing")
+    connection = sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)
+    try:
+        user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        counts = {
+            table: int(connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
+            for table in MEMORY_COUNT_TABLES
+            if table in tables
+        }
+    finally:
+        connection.close()
+    return {
+        "userVersion": user_version,
+        "tables": sorted(tables),
+        "counts": counts,
+    }
+
+
+def require_memory_ops(state: Path, expected_version: int) -> dict[str, Any]:
+    inventory = memory_ops_inventory(state)
+    if inventory["userVersion"] != expected_version:
+        raise RuntimeError(
+            f"memory ops schema is v{inventory['userVersion']}, expected v{expected_version}"
+        )
+    tables = set(inventory["tables"])
+    required = set(MEMORY_LEGACY_TABLES)
+    if expected_version == MEMORY_OPS_SCHEMA_V4:
+        required.update(MEMORY_V4_TABLES)
+    missing = sorted(required - tables)
+    if missing:
+        raise RuntimeError("memory ops schema is missing required tables: " + ", ".join(missing))
+    if expected_version == MEMORY_OPS_SCHEMA_V3:
+        unexpected = sorted(MEMORY_V4_TABLES & tables)
+        if unexpected:
+            raise RuntimeError(
+                "v3 rollback state contains candidate-only memory tables: "
+                + ", ".join(unexpected)
+            )
+    return inventory
+
+
+def validate_memory_schema_drill(
+    pre_upgrade: dict[str, Any],
+    candidate: dict[str, Any],
+    rollback: dict[str, Any],
+    forward: dict[str, Any],
+) -> bool:
+    versions = (
+        pre_upgrade["userVersion"],
+        candidate["userVersion"],
+        rollback["userVersion"],
+        forward["userVersion"],
+    )
+    if versions != (
+        MEMORY_OPS_SCHEMA_V3,
+        MEMORY_OPS_SCHEMA_V4,
+        MEMORY_OPS_SCHEMA_V3,
+        MEMORY_OPS_SCHEMA_V4,
+    ):
+        raise RuntimeError("memory schema drill did not follow v3 -> v4 -> restored v3 -> v4")
+
+    pre_counts = pre_upgrade["counts"]
+    for stage_name, inventory in (
+        ("candidate", candidate),
+        ("rollback", rollback),
+        ("forward", forward),
+    ):
+        for table in MEMORY_LEGACY_TABLES:
+            if inventory["counts"].get(table) != pre_counts.get(table):
+                raise RuntimeError(
+                    f"{stage_name} memory state changed legacy {table} cardinality"
+                )
+
+    legacy_deliveries = pre_counts.get("deliveries", 0)
+    if legacy_deliveries != 3:
+        raise RuntimeError("memory schema drill requires the three-reason v3 fixture")
+    for stage_name, inventory in (("candidate", candidate), ("forward", forward)):
+        counts = inventory["counts"]
+        if counts.get("logical_deliveries") != 1:
+            raise RuntimeError(f"{stage_name} did not produce one logical delivery")
+        if counts.get("logical_delivery_reasons") != legacy_deliveries:
+            raise RuntimeError(f"{stage_name} did not preserve the complete reason set")
+        if counts.get("delivery_aliases") != legacy_deliveries:
+            raise RuntimeError(f"{stage_name} did not alias every legacy delivery")
+    for table in MEMORY_V4_TABLES:
+        if candidate["counts"].get(table) != forward["counts"].get(table):
+            raise RuntimeError(f"forward migration changed candidate {table} cardinality")
+
+    if MEMORY_V4_TABLES & set(rollback["tables"]):
+        raise RuntimeError("rollback state contains v4 memory schema")
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--previous-ref", required=True, help="Git ref for the supported previous package")
@@ -168,6 +382,8 @@ def main() -> int:
             str(python), "-m", "a2a_superhub", "--state", str(state), "artifact", "put",
             "--file", str(artifact_file), "--created-by", "agent.alpha", "--visibility", "shared",
         ], cwd=ROOT)
+        memory_fixture = create_v3_memory_fixture(python, state)
+        pre_upgrade_memory = require_memory_ops(state, MEMORY_OPS_SCHEMA_V3)
         run([
             str(python), "-m", "a2a_superhub", "skill", "install", "--target", "codex",
             "--target-root", str(codex_home),
@@ -175,6 +391,12 @@ def main() -> int:
 
         install(python, current_wheel)
         current_version = version(python)
+        backup = workspace / "pre-upgrade-v3-backup.zip"
+        backup_result = create_authoritative_backup(python, state, backup)
+
+        activate_memory_schema(python, state)
+        candidate_memory = require_memory_ops(state, MEMORY_OPS_SCHEMA_V4)
+        candidate_note = read_memory_note(python, state, memory_fixture["noteId"])
         validation = parse_json([str(python), "-m", "a2a_superhub", "skill", "validate"], cwd=ROOT)
         upgraded_skill = parse_json([
             str(python), "-m", "a2a_superhub", "skill", "install", "--target", "codex",
@@ -183,19 +405,17 @@ def main() -> int:
         diagnostics = parse_json([
             str(python), "-m", "a2a_superhub", "--state", str(state), "operations", "diagnostics",
         ], cwd=ROOT)
-        backup = workspace / "backup.zip"
-        parse_json([
-            str(python), "-m", "a2a_superhub", "--state", str(state), "operations", "backup", "create",
-            "--destination", str(backup),
-        ], cwd=ROOT)
-        restored = workspace / "restored"
-        restore = parse_json([
-            str(python), "-m", "a2a_superhub", "operations", "backup", "restore",
-            "--archive", str(backup), "--target-state", str(restored),
-        ], cwd=ROOT)
+        restored = workspace / "rollback-state"
+        restore = restore_authoritative_backup(python, backup, restored)
+        restored_memory = require_memory_ops(restored, MEMORY_OPS_SCHEMA_V3)
 
         install(python, previous_wheel)
         rolled_back_version = version(python)
+        rollback_memory_stats = parse_json([
+            str(python), "-m", "a2a_superhub", "--state", str(restored), "memory", "stats",
+        ], cwd=ROOT)
+        rollback_note = read_memory_note(python, restored, memory_fixture["noteId"])
+        rollback_memory = require_memory_ops(restored, MEMORY_OPS_SCHEMA_V3)
         rollback_tasks = parse_json([
             str(python), "-m", "a2a_superhub", "--state", str(restored), "task", "list",
         ], cwd=ROOT)
@@ -210,6 +430,9 @@ def main() -> int:
 
         install(python, current_wheel)
         forward_version = version(python)
+        activate_memory_schema(python, restored)
+        forward_memory = require_memory_ops(restored, MEMORY_OPS_SCHEMA_V4)
+        forward_note = read_memory_note(python, restored, memory_fixture["noteId"])
         forward_diagnostics = parse_json([
             str(python), "-m", "a2a_superhub", "--state", str(restored), "operations", "diagnostics",
         ], cwd=ROOT)
@@ -218,6 +441,12 @@ def main() -> int:
             "--target-root", str(codex_home), "--force",
         ], cwd=ROOT)
         forward_skill_baseline = installed_skill_baseline(codex_home)
+        memory_schema_drill = validate_memory_schema_drill(
+            pre_upgrade_memory,
+            candidate_memory,
+            rollback_memory,
+            forward_memory,
+        )
 
         task_id = created_task["taskId"] if "taskId" in created_task else created_task["task"]["taskId"]
         artifact_id = created_artifact["artifactId"]
@@ -238,12 +467,30 @@ def main() -> int:
                 clean_sdist["skillValid"], clean_sdist["skillInstalled"], clean_sdist["skillBackupAbsent"],
                 clean_sdist["skillBaseline"] == current_version,
             )),
-            "upgradeFromPrevious": current_version != previous_version,
-            "authoritativeBackupRestore": restore.get("integrity") == "verified",
-            "rollbackVersion": previous_version == rolled_back_version,
+            "upgradeFromPrevious": all((
+                current_version != previous_version,
+                memory_schema_drill,
+                candidate_note.get("id") == memory_fixture["noteId"],
+            )),
+            "authoritativeBackupRestore": all((
+                backup_result.get("archiveSha256") == sha256(backup),
+                restore.get("integrity") == "verified",
+                restored_memory["counts"] == pre_upgrade_memory["counts"],
+            )),
+            "rollbackVersion": all((
+                previous_version == rolled_back_version,
+                rollback_memory_stats.get("deliveryBacklog") == 3,
+                rollback_note.get("id") == memory_fixture["noteId"],
+                rollback_memory["userVersion"] == MEMORY_OPS_SCHEMA_V3,
+            )),
             "rollbackReadsTask": task_id in task_ids,
             "rollbackReadsArtifact": artifact_id in artifact_ids,
-            "forwardUpgrade": current_version == forward_version,
+            "forwardUpgrade": all((
+                current_version == forward_version,
+                forward_note.get("id") == memory_fixture["noteId"],
+                forward_memory["userVersion"] == MEMORY_OPS_SCHEMA_V4,
+                memory_schema_drill,
+            )),
             "skillUpgradeValidated": validation.get("valid") is True,
             "skillUpgradeBackupCreated": bool(upgraded_skill.get("backup")),
             "skillRollbackAndForward": all((

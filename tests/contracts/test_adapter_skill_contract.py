@@ -19,6 +19,46 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class AdapterSkillContractTests(unittest.TestCase):
+    def test_live_v2_capabilities_match_public_closed_schema(self) -> None:
+        if Draft202012Validator is None:
+            self.skipTest("install the contracts extra for JSON Schema validation")
+        principals = {
+            "beta-token": {
+                "subject": "agent.beta",
+                "kind": "agent",
+                "tokenId": "tok_beta",
+                "scopes": ["memory.read"],
+            }
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            server = make_server(
+                temporary,
+                port=0,
+                enable_memory=True,
+                enable_delivery=True,
+                principals=principals,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                capabilities = HubClient(
+                    f"http://127.0.0.1:{server.server_port}",
+                    token="beta-token",
+                ).request("GET", "/v2/capabilities")
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+        schema = json.loads(
+            (ROOT / "schemas" / "capabilities-v2.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            [],
+            list(Draft202012Validator(schema).iter_errors(capabilities)),
+        )
+
     def setUp(self):
         if Draft202012Validator is None:
             self.skipTest("jsonschema is supplied by the contracts extra")

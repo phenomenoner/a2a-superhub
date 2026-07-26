@@ -116,6 +116,9 @@ class AdapterOfflineEndToEndTests(unittest.TestCase):
                 self.assertIn(event["eventId"], [item["eventId"] for item in events])
                 artifact_read = beta_client.request("GET", f"/v1/artifacts/{artifact['artifactId']}")
                 self.assertEqual(hashlib.sha256(artifact_bytes).hexdigest(), artifact_read["sha256"])
+                exact_page = beta_client.inbox("beta-cold-start")
+                self.assertEqual([created["id"]], [item["note"]["id"] for item in exact_page["items"]])
+                beta_client.ack_inbox("beta-cold-start", exact_page["cursor"])
                 after = HubClient(
                     f"http://127.0.0.1:{second.server_port}", token="beta-token"
                 ).inbox("beta-cold-start")

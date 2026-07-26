@@ -366,7 +366,7 @@ class DurableMemoryTests(unittest.TestCase):
             finally:
                 conn.close()
             self.assertEqual(("local.operator", "memory.note.create.api"), migrated)
-            self.assertEqual(3, version)
+            self.assertEqual(4, version)
             self.assertIn("principal", columns)
             self.assertIn("trace_id", columns)
 
@@ -392,15 +392,42 @@ class DurableMemoryTests(unittest.TestCase):
                 version_again = conn.execute("PRAGMA user_version").fetchone()[0]
                 sharing_tables = {
                     row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-                    if row[0] in {"deliveries", "consumer_cursors", "issued_cursors", "receipts"}
+                    if row[0] in {
+                        "deliveries",
+                        "logical_deliveries",
+                        "logical_delivery_reasons",
+                        "delivery_aliases",
+                        "delivery_sequence_state",
+                        "delivery_route_snapshots",
+                        "logical_ack_receipts",
+                        "issued_cursor_items",
+                        "consumer_cursors",
+                        "issued_cursors",
+                        "receipts",
+                    }
                 }
             finally:
                 conn.close()
             self.assertIn("principal", forwarded_again)
             self.assertIn("trace_id", forwarded_again)
             self.assertEqual(1, row_count)
-            self.assertEqual(3, version_again)
-            self.assertEqual({"deliveries", "consumer_cursors", "issued_cursors", "receipts"}, sharing_tables)
+            self.assertEqual(4, version_again)
+            self.assertEqual(
+                {
+                    "deliveries",
+                    "logical_deliveries",
+                    "logical_delivery_reasons",
+                    "delivery_aliases",
+                    "delivery_sequence_state",
+                    "delivery_route_snapshots",
+                    "logical_ack_receipts",
+                    "issued_cursor_items",
+                    "consumer_cursors",
+                    "issued_cursors",
+                    "receipts",
+                },
+                sharing_tables,
+            )
 
 
 if __name__ == "__main__":

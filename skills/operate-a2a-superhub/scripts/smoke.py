@@ -70,7 +70,12 @@ def run_flow(sender: HubClient, receiver: HubClient, *, existing: bool = False) 
     )
     fetched = receiver.inbox("smoke-runtime")
     wakeup = receiver.wakeup("smoke-runtime")
-    receiver.ack_inbox("smoke-runtime", wakeup["cursor"])
+    if "cursor" in wakeup:
+        raise HubClientError(
+            "wakeup preview unexpectedly exposed an ACK cursor",
+            kind="contract",
+        )
+    receiver.ack_inbox("smoke-runtime", fetched["cursor"])
     after = receiver.inbox("smoke-runtime")
     return {
         "schema": "a2a-superhub.skill-smoke.v1",

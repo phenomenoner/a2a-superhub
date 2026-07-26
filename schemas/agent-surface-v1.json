@@ -1,15 +1,15 @@
 {
   "contract": "a2a-superhub.agent-surface.v1",
-  "productBaseline": "0.2.0",
+  "productBaseline": "0.3.0",
   "status": "operational-controls",
   "packageExtrasContract": "a2a-superhub.package-extras.v1",
-  "apiVersions": ["memory.v1", "artifacts.v1"],
+  "apiVersions": ["memory.v1", "memory.v2", "artifacts.v1"],
   "noteSchemas": ["a2a-superhub.memory.note.v1"],
   "a2aInterfaces": [
     {"binding": "JSONRPC", "protocolVersion": "legacy", "implemented": true},
     {"binding": "JSONRPC", "protocolVersion": "1.0", "implemented": false}
   ],
-  "mcp": {"protocolVersion": "2025-11-25", "surfaceVersion": "memory.v1", "implemented": true},
+  "mcp": {"protocolVersion": "2025-11-25", "surfaceVersion": "memory.v2", "implemented": true},
   "features": {
     "memory": true,
     "memoryFoundation": true,
@@ -23,6 +23,11 @@
     "keywordFallback": true,
     "mcp": true,
     "multiConsumerInbox": true,
+    "logicalDeliveryV2": true,
+    "exactInboxCursorMembership": true,
+    "wakeupAckMode": "none",
+    "typedRelationTargetsV2": true,
+    "noteLifecycleProjection": true,
     "safeWakeup": true,
     "referenceAdapter": true,
     "operatorSkill": true,
@@ -48,7 +53,7 @@
     "qdrantMigrationDrill": true,
     "configuredSearchProvider": true,
     "singleHubSoakHarness": false,
-    "upgradeRollbackGate": false,
+    "upgradeRollbackGate": true,
     "operationallyReady": false
   },
   "limits": {

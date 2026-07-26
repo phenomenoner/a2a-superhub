@@ -4,6 +4,7 @@ import argparse
 import base64
 import json
 import os
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +13,7 @@ from .server import run_server
 from .store import HubStore
 from .auth import Principal
 from .derivation import DerivationService
-from .memory import MemoryService
+from .memory import MemoryError as HubMemoryError, MemoryService
 from .operations import (
     BackupManager,
     OperationsDiagnostics,
@@ -196,18 +197,35 @@ def _cli_principal(args: argparse.Namespace) -> Principal:
 
 def cmd_memory_note_create(args: argparse.Namespace) -> int:
     request = _load_json(args.file)
-    result = MemoryService(args.state).create_note(request, _cli_principal(args), idempotency_key=args.idempotency_key, source_kind="cli")
+    result = MemoryService(args.state).create_note(
+        request,
+        _cli_principal(args),
+        idempotency_key=args.idempotency_key,
+        source_kind="cli",
+        contract_version=2,
+    )
     _print({"inserted": result.inserted, "revision": result.revision, "traceId": result.trace_id, "note": result.note})
     return 0
 
 
 def cmd_memory_note_read(args: argparse.Namespace) -> int:
     try:
-        note = MemoryService(args.state).read_note(args.note_id, _cli_principal(args))
+        service = MemoryService(args.state)
+        note = service.read_note(args.note_id, _cli_principal(args))
     except KeyError:
         _print({"error": "note not found", "noteId": args.note_id})
         return 2
-    _print(note)
+    if args.include_lifecycle:
+        _print(
+            {
+                "note": note,
+                "lifecycle": service.note_lifecycle(
+                    args.note_id, _cli_principal(args)
+                ),
+            }
+        )
+    else:
+        _print(note)
     return 0
 
 
@@ -488,6 +506,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_memory_note_create)
     p = note.add_parser("read", help="Read an authorized memory note")
     p.add_argument("note_id")
+    p.add_argument(
+        "--include-lifecycle",
+        action="store_true",
+        help="Include authorized stored, indexed, delivery, ACK, and linked-reference facts",
+    )
     p.set_defaults(func=cmd_memory_note_read)
     p = memory.add_parser("reindex", help="Rebuild derived memory indexes from Markdown")
     p.set_defaults(func=cmd_memory_reindex)
@@ -597,4 +620,16 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    return int(args.func(args))
+    try:
+        return int(args.func(args))
+    except HubMemoryError as exc:
+        error: dict[str, Any] = {
+            "code": str(getattr(exc, "code", "invalid_request")).upper(),
+            "message": str(exc),
+            "retryable": False,
+        }
+        details = getattr(exc, "details", None)
+        if isinstance(details, dict):
+            error["details"] = details
+        _print({"error": error, "traceId": f"trace_{uuid.uuid4().hex}"})
+        return 2

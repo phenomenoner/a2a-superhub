@@ -39,7 +39,7 @@ accept patches.
 
 ## Event mapping
 
-Adapters should emit hub events as soon as meaningful local milestones happen:
+Adapters should emit hub events as soon as meaningful local state changes happen:
 
 - `task.accepted`
 - `task.progress`
@@ -56,19 +56,33 @@ or `rejected`.
 The removable `a2a_superhub.adapter.ReferenceAdapter` proves the session
 integration boundary. The server core does not import it.
 
-- Session start negotiates current capabilities and server-authenticated
-  identity, fetches the safe wakeup/inbox pack, and emits one delimited
-  `role=data`, `trust=untrusted-memory` block.
-- Delivery failure or process death before insertion leaves the cursor unread.
-  Ack happens only after the runtime delivery callback succeeds.
+- Session start negotiates the current capabilities and server-authenticated
+  identity, fetches the safe wakeup preview, rejects any preview containing a
+  cursor, and emits one delimited `role=data`,
+  `trust=untrusted-memory` block.
+- Wakeup is never ACK authority. The adapter does not acknowledge during
+  session start, even after its delivery callback succeeds. A separate inbox
+  workflow must fetch an exact page and may acknowledge that page's cursor only
+  after the intended consumer accepts it. Delivery failure or process death
+  therefore leaves unread state unchanged.
 - Session end requires an explicit `authorized=True` decision, write/share
   scopes, an idempotency key, and validated task/event/artifact provenance
-  links. Author identity remains server-derived.
+  links. V2 provenance targets use the `task:`, `event:`, and `artifact:`
+  namespaces. Author identity remains server-derived.
 - A legacy Agent Card is read-only discovery. Auth, connection, feature, role,
   and scope mismatches fail distinctly.
 
 This session adapter does not implement task submission, cancellation, A2A 1.0,
 or destructive operator actions. MCP is provided by the separate stateless
 sidecar documented in [MCP_AGENT_INTEGRATION.md](MCP_AGENT_INTEGRATION.md), so
-either component can be removed without changing server state. It can request the server's advertised search
-mode but does not own the retrieval provider.
+either component can be removed without changing server state. The sidecar and
+reference client use memory v2, preserve the typed safe HTTP error fields, and
+offer `includeLifecycle` on note reads. The adapter can request the server's
+advertised search mode but does not own the retrieval provider.
+
+Memory v2 lifecycle output is a set of authorized storage, index, delivery,
+acknowledgement, and link facts. It is not runtime acceptance, comprehension,
+or task completion. The v1 per-reason delivery projection remains available
+through version 0.3.x; migration and the operations schema v4 rollback boundary
+are documented in
+[MEMORY_V2_COMPATIBILITY.md](MEMORY_V2_COMPATIBILITY.md).

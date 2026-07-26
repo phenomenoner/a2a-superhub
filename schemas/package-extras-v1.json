@@ -1,6 +1,6 @@
 {
   "contract": "a2a-superhub.package-extras.v1",
-  "productBaseline": "0.2.0",
+  "productBaseline": "0.3.0",
   "coreRuntimeDependencies": [],
   "installationDoesNotEnableUnimplementedFeatures": true,
   "extras": {

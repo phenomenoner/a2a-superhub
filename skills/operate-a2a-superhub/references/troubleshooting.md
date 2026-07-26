@@ -1,7 +1,12 @@
 # Read-only troubleshooting
 
-1. Capture target, product version, health, readiness, and structured capabilities.
-2. Distinguish connection failure, authentication failure, scope denial, version mismatch, and advertised degraded state.
+1. Capture target, product version, health, readiness, and structured
+   capabilities. For memory v2, record `memoryContract`, `deliveryModel`,
+   `wakeupAckMode`, `ackCursorSource`, and `lifecycleProjection`.
+2. Distinguish connection failure, authentication failure, scope denial,
+   version mismatch, cursor invalidity, cursor refresh requirement, and
+   advertised degraded state. Preserve safe `status`, `code`, `message`,
+   `retryable`, bounded `details`, and `traceId` fields when available.
 3. When `operationalDiagnostics` is advertised and the principal has `hub.admin`,
    capture payload-free store counts, source/index revisions, `lagRecords`, queue
    depth, quarantine, retrieval model identity, state bytes, product version, and
@@ -15,8 +20,20 @@
 5. State whether evidence is contract/static, integration, scenario, or soak altitude.
 
 Do not repair, reindex, rotate credentials, migrate, restore, or delete state as
-part of diagnosis. If a requested diagnostic endpoint is absent in v1, report the
+part of diagnosis. If a requested diagnostic endpoint is absent, report the
 capability gap instead of guessing from local files.
+
+If the server advertises v1 during the 0.3.x compatibility window, report that
+inbox entries are per-reason rows. Do not combine them into v2 logical
+identities during diagnosis. If ACK returns `CURSOR_REFRESH_REQUIRED`, the
+historical cursor lacks proven inbox purpose and would advance state; fetch a
+new inbox page rather than retrying or synthesizing a cursor.
+
+A wakeup response must not contain a cursor. If one appears, stop the
+write-bearing workflow and report a contract mismatch. Successful wakeup,
+resource refresh, or context insertion never proves that unread state changed.
+Lifecycle facts can prove storage, indexing, queueing, recorded ACK, or links;
+they cannot prove comprehension or execution.
 
 For a single-hub endurance result, preserve the operation-specific failure code
 and the final sanitized audit as separate facts. A code such as
@@ -35,3 +52,8 @@ If an approved offline operation reports an active state lease, stop. Identify t
 running hub process and arrange an explicit maintenance window; never bypass or remove
 the lock file. A backup public-target refusal means sensitive state was detected, not
 a scanner malfunction. A migration parity failure leaves the active provider unchanged.
+
+Before opening upgraded state, identify the operations schema version. An older
+binary must never open schema v4. Before the first v4 write, rollback requires
+restoring a verified pre-upgrade v3 backup; after any v4 write, recovery is
+roll-forward with a compatible binary.

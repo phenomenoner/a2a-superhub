@@ -6,7 +6,7 @@
     {"schemaDef": "inboxPage", "instance": {"consumerId": "codex.desktop", "items": [], "cursor": "cursor_0123456789abcdef"}},
     {"schemaDef": "ackRequest", "instance": {"consumerId": "codex.desktop", "cursor": "cursor_0123456789abcdef"}},
     {"schemaDef": "ackResponse", "instance": {"consumerId": "codex.desktop", "acked": true, "cursor": "cursor_0123456789abcdef"}},
-    {"schemaDef": "wakeupResponse", "instance": {"role": "data", "trust": "untrusted-memory", "sections": [{"kind": "profile", "items": []}, {"kind": "inbox", "items": []}, {"kind": "recent", "items": []}, {"kind": "activeTasks", "items": []}], "items": [], "truncated": false}},
+    {"schemaDef": "wakeupResponse", "instance": {"role": "data", "trust": "untrusted-memory", "sections": [{"kind": "profile", "items": [], "hasMore": false}, {"kind": "inbox", "items": [], "hasMore": false}, {"kind": "recent", "items": [], "hasMore": false}, {"kind": "activeTasks", "items": [], "hasMore": false}], "items": [], "truncated": false}},
     {"schemaDef": "errorEnvelope", "instance": {"error": {"code": "SCOPE_DENIED", "message": "memory.share is required", "retryable": false}, "traceId": "trace_safe001"}}
   ],
   "invalid": [

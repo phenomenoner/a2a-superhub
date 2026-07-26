@@ -5,7 +5,7 @@ hybrid retrieval — Markdown/ops/index, FTS5,
 inbox/wakeup, task-log sedimentation, the reference adapter, operator Skill,
 and Qdrant hybrid retrieval, and the stateless MCP sidecar are implemented.
 **📐 Design RFC** covers a future A2A 1.0 runtime binding.
-Last updated: 2026-07-20
+Last updated: 2026-07-26
 Feedback: open a GitHub issue, ideally one that starts with *"this breaks when…"*.
 
 > **Contract and security amendment:** executable schemas and adopted decisions live
@@ -17,6 +17,16 @@ Feedback: open a GitHub issue, ideally one that starts with *"this breaks when�
 > sedimentation, the removable reference adapter, operator Skill, hybrid
 > retrieval with keyword fallback, and MCP 2025-11-25 stdio integration. An
 > A2A 1.0 runtime binding remains future work.
+>
+> **Implemented memory-delivery amendment (0.3.0):** the current `/v2/memory`
+> contract exposes one logical delivery per `(noteId, recipient)`. Wakeup is a
+> bounded, read-only preview and never returns an acknowledgement cursor.
+> Acknowledgement is valid only for the opaque cursor returned with the exact
+> inbox page that the consumer fetched. The persisted note remains
+> `memory.note.v1`; typed relation targets and delivery semantics are versioned
+> at the API boundary. See
+> [MEMORY_V2_COMPATIBILITY.md](MEMORY_V2_COMPATIBILITY.md) for the executable
+> compatibility and rollback boundary.
 
 ## 1. Vision
 
@@ -40,7 +50,7 @@ for retrieval. No graph database. No LLM in the write path.
 ```mermaid
 flowchart TB
   subgraph ACCESS["Access plane"]
-    HTTP["HTTP JSON API /v1/*"]
+    HTTP["HTTP JSON API /v1/* and /v2/memory/*"]
     SSE["SSE / long-poll (coordination hardening track)"]
     MCP["MCP server (stdio)"]
     CLI["CLI"]
@@ -57,7 +67,7 @@ flowchart TB
     MD["Markdown notes — source of truth"]
     IDX["memory.sqlite — metadata + KG edges + timeline + FTS5"]
     QDR["Qdrant — dense + sparse vectors"]
-    INBOX["Per-agent memory inbox"]
+    INBOX["Logical per-agent memory deliveries"]
     DERIV["Multimodal derivers (optional)"]
   end
 
@@ -92,17 +102,16 @@ state/memory/
     topics/<slug>/            # "rooms" by topic
     tasklog/2026/07/task_x.md # auto-sedimented collaboration records
     people/<human-id>.md      # optional profiles for human participants
-  inbox/
-    <agent-id>.jsonl          # append-only pointers {noteId, reason, createdAt}
-    <agent-id>.cursor         # read cursor
+  memory-ops.sqlite           # logical deliveries, exact-page cursors, ACK receipts
   index/                      # fully rebuildable
     memory.sqlite
     qdrant/
 ```
 
-`inbox/` stores **pointers, never content** — content exists exactly once, in
-the markdown tree. Permission changes and deletions take effect immediately for
-everyone.
+The operational database stores **pointers and receipts, never note content** —
+content exists exactly once in the Markdown tree. A logical delivery records all
+matching routing reasons without multiplying a note into several consumer
+items. Permission changes and deletions take effect immediately for everyone.
 
 ## 4. The memory unit
 

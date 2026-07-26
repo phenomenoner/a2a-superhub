@@ -69,7 +69,8 @@ class MemoryBatchingTests(unittest.TestCase):
             restarted = MemoryService(tmp, enable_delivery=True)
             restarted.init()
             deliveries = restarted.list_deliveries()
-            self.assertEqual(3, len(deliveries))
+            self.assertEqual(1, len(deliveries))
+            self.assertEqual(["about", "direct", "handoff"], deliveries[0]["reasons"])
             self.assertEqual({result.note["id"]}, {item["noteId"] for item in deliveries})
 
     def test_startup_recovery_and_delivery_backfill_use_bounded_connections(self):
@@ -91,7 +92,7 @@ class MemoryBatchingTests(unittest.TestCase):
             restarted = ConnectionCountingMemoryService(tmp, enable_delivery=True)
             restarted.init()
             self.assertLessEqual(restarted.connections, 10)
-            self.assertEqual(len(restarted.list_deliveries()), 200)
+            self.assertEqual(len(restarted.list_deliveries()), 100)
 
     def test_index_lag_diagnostics_use_one_manifest_snapshot_not_one_connection_per_note(self):
         principal = Principal(

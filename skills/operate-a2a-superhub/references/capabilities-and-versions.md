@@ -5,8 +5,9 @@ planning or marketing label.
 
 The current opt-in memory, hybrid-retrieval, artifact-text, and agent-protocol contract pins:
 
-- product baseline: 0.2.0;
-- memory API: `memory.v1`, with opt-in offline sharing implemented;
+- product baseline: 0.3.0;
+- memory API: `memory.v2` for current agents, with `memory.v1` per-reason
+  delivery views dual-written and served through version 0.3.x;
 - note schema: `a2a-superhub.memory.note.v1`, implemented for Markdown notes;
 - A2A `Part` mapping: `text`, `raw`, `url`, and `data` oneofs are implemented;
   legacy `kind` input requires an explicit compatibility flag, while the complete
@@ -19,9 +20,30 @@ The current opt-in memory, hybrid-retrieval, artifact-text, and agent-protocol c
   authoritative backup/clean restore, recoverable retention, and parity-gated
   Qdrant provider activation/rollback;
 - MCP negotiation: protocol `2025-11-25`, implemented by the stateless stdio
-  sidecar with ten tools and `memory://note/{id}` plus
+  sidecar over memory v2 with ten tools and `memory://note/{id}` plus
   `memory://wakeup/{agent}` resources;
 - legacy JSON-RPC coordination: implemented and separately identified.
+
+For memory v2, require `memoryContract: v2`, `deliveryModel: logical.v2`,
+`wakeupAckMode: none`, `ackCursorSource: inbox-only`, and
+`lifecycleProjection: true` before using those behaviors. One inbox item is one
+logical delivery for a note and recipient, with the complete bounded `reasons`
+array. V1 exposes one row per reason and is not interchangeable with that
+identity model.
+
+Wakeup is always a bounded preview and never carries an acknowledgeable cursor.
+Only an inbox response issues ACK authority, bound to the exact page membership,
+principal, and consumer. Acknowledge only after the intended consumer accepts
+that page. A migrated historical cursor that lacks recorded inbox purpose can
+be a no-op only when it does not advance state; otherwise refetch after
+`CURSOR_REFRESH_REQUIRED`.
+
+V2 writes require relation targets in the `agent:`, `note:`, `project:`,
+`task:`, `event:`, or `artifact:` namespace. Note reads can request
+`includeLifecycle`; the result is an authorized set of stored, indexed, queued,
+acknowledged, and linked-reference facts, not a claim of comprehension or
+execution. Typed HTTP errors preserve safe `code`, `message`, `retryable`,
+bounded validation `details`, and `traceId` fields through the client and MCP.
 
 Treat `memoryFoundation`, `memorySharing`, `timelineGraph`, `safeWakeup`,
 `adapter`, `runtimeWatcher`, and `taskLog` as independent granular capabilities.
@@ -57,3 +79,9 @@ the adapter must match it to its intended principal and the server remains the
 final authority. A missing current capabilities route may downgrade to legacy
 read-only discovery. Authentication, connection, and transient HTTP failures
 must never be relabeled as legacy compatibility.
+
+Operations schema v4 stores logical deliveries and exact inbox-page ACK
+membership. Before its first write, rollback requires restoring a verified
+pre-upgrade v3 backup before starting the previous binary. After any v4 write,
+recovery is roll-forward with a compatible binary. Dual-written v1 rows do not
+make a v4 state directory readable by an older binary.

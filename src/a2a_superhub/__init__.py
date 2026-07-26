@@ -4,4 +4,4 @@ from .store import HubStore
 from .artifacts import ArtifactStore
 
 __all__ = ["ArtifactStore", "HubStore"]
-__version__ = "0.2.0"
+__version__ = "0.3.0"
