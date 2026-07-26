@@ -22,6 +22,31 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @unittest.skipIf(importlib.util.find_spec("pypdf") is None, "install the derive extra for the soak harness")
 class SingleHubSoakHarnessScenarios(unittest.TestCase):
+    def test_failure_code_retains_only_a_bounded_server_trace_id(self) -> None:
+        valid = HubClientError(
+            "fixed public message",
+            kind="http",
+            status=500,
+            code="INTERNAL_ERROR",
+            trace_id="trace_" + ("a" * 32),
+        )
+        malformed = HubClientError(
+            "fixed public message",
+            kind="http",
+            status=500,
+            code="INTERNAL_ERROR",
+            trace_id="trace_unbounded-private-marker",
+        )
+
+        self.assertEqual(
+            f"HubClientError:http:500:INTERNAL_ERROR:trace_{'a' * 32}",
+            Soak.failure_code(valid),
+        )
+        self.assertEqual(
+            "HubClientError:http:500:INTERNAL_ERROR",
+            Soak.failure_code(malformed),
+        )
+
     def test_restart_deadline_is_measured_after_replacement_is_ready(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -244,7 +269,7 @@ class SingleHubSoakHarnessScenarios(unittest.TestCase):
                     str(ROOT / "tools" / "single_hub_soak.py"),
                     "--workspace", str(workspace),
                     "--evidence", str(evidence),
-                    "--duration-seconds", "7",
+                    "--duration-seconds", "12",
                     "--operation-interval", "0.4",
                     "--artifact-interval", "1.5",
                     "--restart-interval", "2",
@@ -254,7 +279,7 @@ class SingleHubSoakHarnessScenarios(unittest.TestCase):
                 env=environment,
                 text=True,
                 capture_output=True,
-                timeout=90,
+                timeout=120,
             )
             result = json.loads(evidence.read_text(encoding="utf-8"))
             self.assertEqual(0, completed.returncode, (completed.stdout, completed.stderr, result))

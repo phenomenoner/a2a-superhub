@@ -3,6 +3,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import stat
+import sys
 import threading
 import uuid
 from http import HTTPStatus
@@ -221,6 +222,7 @@ def make_server(
             *,
             retryable: bool = False,
             details: dict[str, Any] | None = None,
+            trace_id: str | None = None,
         ) -> None:
             error: dict[str, Any] = {
                 "code": code,
@@ -232,15 +234,32 @@ def make_server(
                 if len(encoded) <= 8192:
                     error["details"] = details
             self._json(
-                {"error": error, "traceId": f"trace_{uuid.uuid4().hex}"},
+                {"error": error, "traceId": trace_id or f"trace_{uuid.uuid4().hex}"},
                 status=status,
             )
 
-        def _internal_error(self) -> None:
+        def _internal_error(self, exc: Exception) -> None:
+            trace_id = f"trace_{uuid.uuid4().hex}"
+            try:
+                print(
+                    json.dumps(
+                        {
+                            "event": "internal-error",
+                            "traceId": trace_id,
+                            "exceptionClass": type(exc).__name__,
+                        },
+                        sort_keys=True,
+                    ),
+                    file=sys.stderr,
+                    flush=True,
+                )
+            except OSError:
+                pass
             self._api_error(
                 "INTERNAL_ERROR",
                 "an internal error occurred",
                 HTTPStatus.INTERNAL_SERVER_ERROR,
+                trace_id=trace_id,
             )
 
         def _task_request(self, value: dict[str, Any]) -> dict[str, Any]:
@@ -542,8 +561,8 @@ def make_server(
                 self._api_error("ARTIFACT_CONFLICT", str(exc), HTTPStatus.CONFLICT)
             except ArtifactError as exc:
                 self._api_error("INVALID_ARTIFACT", str(exc), HTTPStatus.BAD_REQUEST)
-            except Exception:
-                self._internal_error()
+            except Exception as exc:
+                self._internal_error(exc)
 
         def do_POST(self) -> None:
             try:
@@ -716,8 +735,8 @@ def make_server(
                     HTTPStatus.BAD_REQUEST,
                     details=getattr(exc, "details", None),
                 )
-            except Exception:
-                self._internal_error()
+            except Exception as exc:
+                self._internal_error(exc)
 
         def do_PUT(self) -> None:
             try:
@@ -776,8 +795,8 @@ def make_server(
                 self._api_error("ARTIFACT_CONFLICT", str(exc), HTTPStatus.CONFLICT)
             except ArtifactError as exc:
                 self._api_error("INVALID_ARTIFACT", str(exc), HTTPStatus.BAD_REQUEST)
-            except Exception:
-                self._internal_error()
+            except Exception as exc:
+                self._internal_error(exc)
 
         def _handle_json_rpc(self, body: dict[str, Any]) -> None:
             request_id = body.get("id")
@@ -857,7 +876,7 @@ def make_server(
                     except Exception:
                         # The next filesystem event or explicit operator scan retries;
                         # request handlers continue to fail closed on quarantined IDs.
-                        pass
+                        changed.set()
                     else:
                         converged.set()
 
@@ -903,7 +922,7 @@ def make_server(
                             pass
                         else:
                             converged.set()
-                        previous = current
+                            previous = current
 
             polling_thread = threading.Thread(target=poll_convergence, name="a2a-memory-poll-convergence", daemon=True)
             polling_thread.start()

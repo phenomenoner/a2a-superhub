@@ -712,6 +712,11 @@ class MemoryService:
         )
 
     def init(self) -> None:
+        """Initialize or migrate shared memory state under one process-local owner."""
+        with self._convergence_lock:
+            self._init_locked()
+
+    def _init_locked(self) -> None:
         if self._initialized:
             try:
                 conn = sqlite3.connect(self.ops_path)
@@ -839,6 +844,28 @@ class MemoryService:
         )
 
     def _create_note_owned(
+        self,
+        request: dict[str, Any],
+        principal: Principal,
+        *,
+        idempotency_key: str | None,
+        failpoint: str | Callable[[str], None] | None,
+        source_kind: str,
+        trace_id: str | None,
+        contract_version: int,
+    ) -> CreateResult:
+        with self._convergence_lock:
+            return self._create_note_owned_locked(
+                request,
+                principal,
+                idempotency_key=idempotency_key,
+                failpoint=failpoint,
+                source_kind=source_kind,
+                trace_id=trace_id,
+                contract_version=contract_version,
+            )
+
+    def _create_note_owned_locked(
         self,
         request: dict[str, Any],
         principal: Principal,
@@ -1788,6 +1815,20 @@ class MemoryService:
         return any(marker in serialized for marker in ('"token', 'secret', 'password', 'api_key', 'apikey'))
 
     def replay_terminal_outbox(
+        self,
+        hub_store: Any,
+        *,
+        max_payload_bytes: int = 65_536,
+        failpoint: str | Callable[[str], None] | None = None,
+    ) -> dict[str, int]:
+        with self._convergence_lock:
+            return self._replay_terminal_outbox_locked(
+                hub_store,
+                max_payload_bytes=max_payload_bytes,
+                failpoint=failpoint,
+            )
+
+    def _replay_terminal_outbox_locked(
         self,
         hub_store: Any,
         *,
@@ -2796,20 +2837,23 @@ class MemoryWatcher:
         self.clock = clock
         self.debounce_seconds = max(0.0, debounce_seconds)
         self._pending: dict[str, float] = {}
+        self._lock = threading.Lock()
 
     @property
     def pending_count(self) -> int:
-        return len(self._pending)
+        with self._lock:
+            return len(self._pending)
 
     def notify(self, path: str | Path, event_type: str, *, dest_path: str | Path | None = None) -> None:
         if event_type not in {"created", "modified", "moved", "deleted"}:
             return
         due = self.clock() + self.debounce_seconds
-        for candidate in (path, dest_path):
-            if candidate is None:
-                continue
-            raw = unicodedata.normalize("NFC", str(candidate)).replace("\\", "/").casefold()
-            self._pending[raw] = due
+        with self._lock:
+            for candidate in (path, dest_path):
+                if candidate is None:
+                    continue
+                raw = unicodedata.normalize("NFC", str(candidate)).replace("\\", "/").casefold()
+                self._pending[raw] = due
 
     def on_any_event(self, event: Any) -> None:
         if getattr(event, "is_directory", False):
@@ -2822,12 +2866,20 @@ class MemoryWatcher:
 
     def flush(self, *, force: bool = False) -> dict[str, int] | None:
         now = self.clock()
-        ready = [key for key, due in self._pending.items() if force or due <= now]
+        with self._lock:
+            ready = {
+                key: due
+                for key, due in self._pending.items()
+                if force or due <= now
+            }
         if not ready:
             return None
-        for key in ready:
-            self._pending.pop(key, None)
-        return self.service.sync_filesystem()
+        result = self.service.sync_filesystem()
+        with self._lock:
+            for key, due in ready.items():
+                if self._pending.get(key) == due:
+                    self._pending.pop(key, None)
+        return result
 
     def scan_once(self) -> dict[str, int]:
         """Polling fallback and explicit full-scan recovery seam."""

@@ -9,6 +9,7 @@ import json
 import os
 import platform
 import queue
+import re
 import socket
 import sqlite3
 import subprocess
@@ -311,7 +312,10 @@ class Soak:
     @staticmethod
     def failure_code(exc: Exception) -> str:
         if isinstance(exc, HubClientError):
-            return f"HubClientError:{exc.kind}:{exc.status or 0}:{exc.code or 'none'}"
+            result = f"HubClientError:{exc.kind}:{exc.status or 0}:{exc.code or 'none'}"
+            if isinstance(exc.trace_id, str) and re.fullmatch(r"trace_[0-9a-f]{32}", exc.trace_id):
+                result += f":{exc.trace_id}"
+            return result
         if isinstance(exc, SoakInvariantError):
             return f"SoakInvariantError:{exc.code}"
         return type(exc).__name__

@@ -54,6 +54,23 @@ maximum sequence in that group. Consequently:
 The migrator refuses an ops schema newer than it understands. It does not
 silently rewrite the schema version.
 
+## Cross-platform convergence boundary
+
+Markdown notes remain authoritative on every supported platform. Within one hub
+process, initialization, API and task-log note creation, derived-index work,
+logical-delivery generation, and filesystem convergence use one shared mutation
+owner. This prevents a watcher cycle and an HTTP write from concurrently
+advancing the same SQLite/index pipeline without relying on Windows-specific
+locks, paths, or process behavior.
+
+Watcher notifications are removed from the pending generation only after the
+full convergence operation succeeds. A transient SQLite or filesystem failure
+therefore remains retryable instead of silently losing the only notification.
+Search remains available from the last committed derived snapshot while a
+filesystem scan is in progress. The repository CI matrix exercises Windows and
+Linux with Python 3.11 and 3.12; this is compatibility evidence, not a
+throughput, latency, or sustained-workload claim.
+
 ## Cursor compatibility
 
 Schema v3 did not record whether an issued cursor came from an inbox page,

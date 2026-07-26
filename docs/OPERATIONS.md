@@ -63,11 +63,22 @@ diagnostic snapshot exists, a concurrent caller waits for the first collection.
 Filesystem convergence also computes index-recovery work before opening a write
 transaction and creates delivery records only for notes whose authoritative
 revision changed. Unchanged corpus entries are not rewritten on every watcher
-cycle. SQLite connections use a bounded busy wait for residual cross-process
-contention, so a concurrent API note or inbox cursor operation waits for a short
+cycle. Within one hub process, initialization, API note creation, task-log note
+creation, and filesystem convergence share one mutation owner while search
+continues to read the last committed index snapshot. This is a platform-neutral
+threading boundary; it does not depend on Windows file locks or process APIs.
+SQLite connections additionally use a bounded busy wait for residual
+cross-process contention, so an inbox cursor operation waits for a short
 transaction instead of being crowded out by a corpus-wide maintenance write.
-Contention that exceeds the bound remains an explicit failed operation; the hub
-does not silently discard the write.
+Contention that exceeds the bound remains an explicit failed operation.
+
+The watcher consumes a pending filesystem generation only after its complete
+parse, index, and delivery convergence succeeds. A transient failure retains
+the generation and schedules another bounded attempt; it does not silently turn
+an observed Markdown write into a missing delivery. Unexpected HTTP failures
+still return a fixed public `INTERNAL_ERROR`. Private process diagnostics record
+only the matching `traceId` and exception class, never the request body, token,
+cursor, exception message, or local path.
 
 The disposable FTS/KG/timeline index runs in SQLite WAL mode. An active derived
 index writer therefore does not block keyword searches from reading the last

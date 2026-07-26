@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import shutil
 import sqlite3
 import tempfile
@@ -22,6 +23,23 @@ ADMIN = Principal("local.operator", "operator", "tok_admin", frozenset({"memory.
 
 
 class MemoryWatcherScenarios(unittest.TestCase):
+    @staticmethod
+    def _write_retry_sentinel(service: MemoryService, note_id: str) -> None:
+        note = {
+            "schema": "a2a-superhub.memory.note.v1",
+            "id": note_id,
+            "type": "observation",
+            "title": "runtime retry sentinel",
+            "author": "local.operator",
+            "visibility": "shared",
+            "recordedAt": "2026-07-26T13:00:00Z",
+            "source": {"kind": "filesystem"},
+            "body": "RUNTIME-WATCHER-RETRY-SENTINEL",
+        }
+        path = note_path(service.root, note_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(serialize_note(note))
+
     def test_keyword_search_reads_committed_snapshot_while_index_writer_is_open(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             service = MemoryService(Path(tmp))
@@ -534,6 +552,217 @@ class MemoryWatcherScenarios(unittest.TestCase):
             restarted_watcher = MemoryWatcher(service, clock=lambda: now[0], debounce_seconds=1.0)
             restarted_watcher.startup_scan()
             self.assertEqual(1, len(service.search("after burst", OWNER)))
+
+    def test_failed_watcher_flush_retains_the_pending_generation_for_retry(self) -> None:
+        attempts = 0
+
+        class FlakyService:
+            def sync_filesystem(self) -> dict[str, int]:
+                nonlocal attempts
+                attempts += 1
+                if attempts == 1:
+                    raise sqlite3.OperationalError("simulated transient contention")
+                return {"assigned": 0, "enqueued": 1, "indexed": 1, "removed": 0}
+
+        watcher = MemoryWatcher(FlakyService(), clock=lambda: 100.0, debounce_seconds=0)
+        watcher.notify("notes/retry.md", "modified")
+
+        with self.assertRaises(sqlite3.OperationalError):
+            watcher.flush(force=True)
+        self.assertEqual(1, watcher.pending_count)
+
+        self.assertEqual(
+            {"assigned": 0, "enqueued": 1, "indexed": 1, "removed": 0},
+            watcher.flush(force=True),
+        )
+        self.assertEqual(0, watcher.pending_count)
+        self.assertEqual(2, attempts)
+
+    def test_runtime_watchdog_retries_failed_generation_without_a_second_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            server = make_server(Path(tmp), host="127.0.0.1", port=0, enable_memory=True)
+            service = server.memory_service
+            self.assertIsNotNone(service)
+            service.init()
+            convergence = server.memory_convergence_event
+            convergence.clear()
+            original_sync = service.sync_filesystem
+            attempts = 0
+
+            def fail_once() -> dict[str, int]:
+                nonlocal attempts
+                attempts += 1
+                if attempts == 1:
+                    raise sqlite3.OperationalError("simulated watcher contention")
+                return original_sync()
+
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                with patch.object(service, "sync_filesystem", side_effect=fail_once):
+                    self._write_retry_sentinel(
+                        service,
+                        "mem_11111111111111111111111111111111",
+                    )
+                    self.assertTrue(
+                        convergence.wait(8),
+                        "watchdog did not retry the retained generation",
+                    )
+                self.assertGreaterEqual(attempts, 2)
+                self.assertEqual(
+                    1,
+                    len(service.search("RUNTIME-WATCHER-RETRY-SENTINEL", ADMIN)),
+                )
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+
+    def test_polling_fallback_retries_failed_unchanged_snapshot(self) -> None:
+        real_import = builtins.__import__
+
+        def without_watchdog(name: str, *args: object, **kwargs: object):
+            if name == "watchdog.events" or name == "watchdog.observers":
+                raise ImportError("simulated optional watchdog absence")
+            return real_import(name, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("builtins.__import__", side_effect=without_watchdog):
+                server = make_server(Path(tmp), host="127.0.0.1", port=0, enable_memory=True)
+            service = server.memory_service
+            self.assertIsNotNone(service)
+            service.init()
+            convergence = server.memory_convergence_event
+            convergence.clear()
+            original_sync = service.sync_filesystem
+            attempts = 0
+
+            def fail_once() -> dict[str, int]:
+                nonlocal attempts
+                attempts += 1
+                if attempts == 1:
+                    raise sqlite3.OperationalError("simulated polling contention")
+                return original_sync()
+
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                with patch.object(service, "sync_filesystem", side_effect=fail_once):
+                    self._write_retry_sentinel(
+                        service,
+                        "mem_22222222222222222222222222222222",
+                    )
+                    self.assertTrue(
+                        convergence.wait(8),
+                        "polling fallback did not retry the unchanged snapshot",
+                    )
+                self.assertGreaterEqual(attempts, 2)
+                self.assertEqual(
+                    1,
+                    len(service.search("RUNTIME-WATCHER-RETRY-SENTINEL", ADMIN)),
+                )
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+
+    def test_api_create_and_filesystem_convergence_have_one_mutation_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            service = MemoryService(
+                Path(tmp),
+                enable_delivery=True,
+                enable_watcher_side_effects=True,
+            )
+            service.init()
+            external_id = "mem_ffffffffffffffffffffffffffffffff"
+            external = {
+                "schema": "a2a-superhub.memory.note.v1",
+                "id": external_id,
+                "type": "observation",
+                "title": "filesystem concurrency sentinel",
+                "author": "local.operator",
+                "visibility": "shared",
+                "recordedAt": "2026-07-26T13:00:00Z",
+                "source": {"kind": "filesystem"},
+                "about": ["agent.beta"],
+                "body": "FILESYSTEM-ONLY-SENTINEL",
+            }
+            external_path = note_path(service.root, external_id)
+            external_path.parent.mkdir(parents=True, exist_ok=True)
+            external_path.write_bytes(serialize_note(external))
+
+            original_upsert = service._upsert_index
+            first_upsert_entered = threading.Event()
+            release_first_upsert = threading.Event()
+            active_lock = threading.Lock()
+            active = 0
+            max_active = 0
+            failures: list[BaseException] = []
+
+            def observed_upsert(note: dict[str, object], **kwargs: object) -> None:
+                nonlocal active, max_active
+                with active_lock:
+                    active += 1
+                    max_active = max(max_active, active)
+                try:
+                    if threading.current_thread().name == "api-create":
+                        first_upsert_entered.set()
+                        if not release_first_upsert.wait(5):
+                            raise AssertionError("test did not release API index mutation")
+                    original_upsert(note, **kwargs)
+                finally:
+                    with active_lock:
+                        active -= 1
+
+            service._upsert_index = observed_upsert  # type: ignore[method-assign]
+
+            def create_api_note() -> None:
+                try:
+                    service.create_note(
+                        {
+                            "type": "observation",
+                            "title": "API concurrency sentinel",
+                            "visibility": "shared",
+                            "about": ["agent.beta"],
+                            "body": "API-CONVERGENCE-OWNER-SENTINEL",
+                        },
+                        OWNER,
+                        idempotency_key="convergence-owner",
+                    )
+                except BaseException as exc:
+                    failures.append(exc)
+
+            def converge_filesystem() -> None:
+                try:
+                    service.sync_filesystem()
+                except BaseException as exc:
+                    failures.append(exc)
+
+            create_thread = threading.Thread(target=create_api_note, name="api-create")
+            convergence_thread = threading.Thread(
+                target=converge_filesystem,
+                name="filesystem-convergence",
+            )
+            create_thread.start()
+            self.assertTrue(first_upsert_entered.wait(5), "API create did not reach index mutation")
+            convergence_thread.start()
+            time.sleep(0.2)
+            with active_lock:
+                self.assertEqual(1, max_active)
+            self.assertTrue(convergence_thread.is_alive())
+            release_first_upsert.set()
+            create_thread.join(timeout=10)
+            convergence_thread.join(timeout=10)
+
+            self.assertFalse(create_thread.is_alive())
+            self.assertFalse(convergence_thread.is_alive())
+            self.assertEqual([], failures)
+            with active_lock:
+                self.assertEqual(1, max_active)
+            self.assertEqual(
+                [external_id],
+                [item["id"] for item in service.search("FILESYSTEM-ONLY-SENTINEL", ADMIN)],
+            )
 
     def test_local_admin_missing_id_assignment_is_flagged_atomic_and_collision_safe(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

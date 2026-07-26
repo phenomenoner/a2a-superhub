@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import sys
 import tempfile
@@ -7,7 +8,7 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
@@ -158,24 +159,26 @@ class ValidationErrorParityScenarios(unittest.TestCase):
             server, thread = start_hub(temporary)
             base = f"http://127.0.0.1:{server.server_port}"
             try:
-                with patch.object(
-                    server.memory_service,
-                    "create_note",
-                    side_effect=RuntimeError(
-                        "private-path-and-token-marker-must-not-return"
-                    ),
-                ):
-                    status, response = raw_request(
-                        base,
-                        "/v2/memory/notes",
-                        {
-                            "type": "observation",
-                            "title": "unexpected",
-                            "visibility": "private",
-                            "body": "request-body-marker-must-not-return",
-                        },
-                        idempotency_key="unexpected-error",
-                    )
+                private_diagnostics = io.StringIO()
+                with redirect_stderr(private_diagnostics):
+                    with patch.object(
+                        server.memory_service,
+                        "create_note",
+                        side_effect=RuntimeError(
+                            "private-path-and-token-marker-must-not-return"
+                        ),
+                    ):
+                        status, response = raw_request(
+                            base,
+                            "/v2/memory/notes",
+                            {
+                                "type": "observation",
+                                "title": "unexpected",
+                                "visibility": "private",
+                                "body": "request-body-marker-must-not-return",
+                            },
+                            idempotency_key="unexpected-error",
+                        )
                 self.assertEqual(500, status)
                 self.assertEqual("INTERNAL_ERROR", response["error"]["code"])
                 self.assertFalse(response["error"]["retryable"])
@@ -183,6 +186,12 @@ class ValidationErrorParityScenarios(unittest.TestCase):
                 self.assertNotIn("private-path", serialized)
                 self.assertNotIn("request-body", serialized)
                 self.assertRegex(response["traceId"], r"^trace_[0-9a-f]{32}$")
+                diagnostic = json.loads(private_diagnostics.getvalue())
+                self.assertEqual("internal-error", diagnostic["event"])
+                self.assertEqual("RuntimeError", diagnostic["exceptionClass"])
+                self.assertEqual(response["traceId"], diagnostic["traceId"])
+                self.assertNotIn("private-path", private_diagnostics.getvalue())
+                self.assertNotIn("request-body", private_diagnostics.getvalue())
             finally:
                 server.shutdown()
                 thread.join(timeout=5)
