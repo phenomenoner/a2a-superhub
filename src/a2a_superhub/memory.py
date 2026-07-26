@@ -1945,8 +1945,10 @@ class MemoryService:
     def note_lifecycle(self, note_id: str, principal: Principal) -> dict[str, Any]:
         """Project authorized operational facts without inventing a linear state."""
         self.init()
-        note = self._read_authoritative(note_id)
         admin = principal.has("memory.admin")
+        if not admin and not principal.has("memory.read"):
+            raise AuthorizationError("memory.read scope required")
+        note = self._read_authoritative(note_id)
         author = note["author"] == principal.subject
         with self._connect(self.ops_path) as conn:
             delivery_rows = conn.execute(

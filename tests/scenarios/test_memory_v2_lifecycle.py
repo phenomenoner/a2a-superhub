@@ -1,20 +1,26 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import tempfile
+import threading
 import unittest
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from a2a_superhub.auth import Principal
 from a2a_superhub.memory import (
     CURSOR_PURPOSE_UNKNOWN,
     DELIVERY_MODEL_V1,
+    AuthorizationError,
     CursorRefreshRequiredError,
     MemoryService,
     atomic_write,
     note_path,
     serialize_note,
 )
+from a2a_superhub.server import make_server
 
 
 OWNER = Principal(
@@ -29,9 +35,103 @@ RECEIVER = Principal(
 UNRELATED = Principal(
     "agent.gamma", "agent", "tok_unrelated", frozenset({"memory.read"})
 )
+OWNER_WITHOUT_READ = Principal(
+    "agent.alpha", "agent", "tok_owner_without_read", frozenset()
+)
+RECEIVER_WITHOUT_READ = Principal(
+    "agent.beta", "agent", "tok_receiver_without_read", frozenset()
+)
+ADMIN_WITHOUT_READ = Principal(
+    "local.operator", "operator", "tok_admin_without_read", frozenset({"memory.admin"})
+)
 
 
 class MemoryV2LifecycleScenarios(unittest.TestCase):
+    def test_lifecycle_requires_read_scope_for_author_and_recipient_on_service_and_http(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            service = MemoryService(Path(temporary), enable_delivery=True)
+            created = service.create_note(
+                {
+                    "type": "handoff",
+                    "title": "Scope-protected lifecycle",
+                    "visibility": "direct:agent.beta",
+                    "body": "facts require authority",
+                },
+                OWNER,
+                idempotency_key="lifecycle-scope",
+            )
+
+            for principal in (OWNER_WITHOUT_READ, RECEIVER_WITHOUT_READ):
+                with self.subTest(surface="service", subject=principal.subject):
+                    with self.assertRaises(AuthorizationError):
+                        service.note_lifecycle(created.note["id"], principal)
+            self.assertEqual(
+                created.note["id"],
+                service.note_lifecycle(created.note["id"], ADMIN_WITHOUT_READ)[
+                    "noteId"
+                ],
+            )
+
+            principals = {
+                "owner-without-read": {
+                    "subject": OWNER_WITHOUT_READ.subject,
+                    "kind": "agent",
+                    "tokenId": OWNER_WITHOUT_READ.token_id,
+                    "scopes": ["task.read"],
+                },
+                "receiver-without-read": {
+                    "subject": RECEIVER_WITHOUT_READ.subject,
+                    "kind": "agent",
+                    "tokenId": RECEIVER_WITHOUT_READ.token_id,
+                    "scopes": ["task.read"],
+                },
+                "admin-without-read": {
+                    "subject": ADMIN_WITHOUT_READ.subject,
+                    "kind": "operator",
+                    "tokenId": ADMIN_WITHOUT_READ.token_id,
+                    "scopes": ["memory.admin"],
+                },
+            }
+            server = make_server(
+                temporary,
+                port=0,
+                enable_memory=True,
+                enable_delivery=True,
+                principals=principals,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            url = (
+                f"http://127.0.0.1:{server.server_port}"
+                f"/v2/memory/notes/{created.note['id']}/lifecycle"
+            )
+            try:
+                for token in ("owner-without-read", "receiver-without-read"):
+                    with self.subTest(surface="http", token=token):
+                        request = urllib.request.Request(
+                            url,
+                            headers={"Authorization": f"Bearer {token}"},
+                        )
+                        with self.assertRaises(urllib.error.HTTPError) as raised:
+                            urllib.request.urlopen(request, timeout=10)
+                        self.assertEqual(403, raised.exception.code)
+                        body = json.loads(
+                            raised.exception.read().decode("utf-8")
+                        )
+                        self.assertEqual("SCOPE_DENIED", body["error"]["code"])
+
+                admin_request = urllib.request.Request(
+                    url,
+                    headers={"Authorization": "Bearer admin-without-read"},
+                )
+                with urllib.request.urlopen(admin_request, timeout=10) as response:
+                    admin_view = json.loads(response.read().decode("utf-8"))
+                self.assertEqual(created.note["id"], admin_view["noteId"])
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
     def test_lifecycle_is_authorized_independent_facts_not_a_linear_state(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             service = MemoryService(Path(temporary), enable_delivery=True)

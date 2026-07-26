@@ -45,11 +45,11 @@ reasons as separate rows throughout the 0.3.x line, but its rows share the same
 logical acknowledgement boundary. Partial retrieval of those rows must not
 acknowledge the logical delivery.
 
-Lifecycle output reports independent facts—visibility, routing, fetched-page
-membership, acknowledgement, retention, quarantine, supersession, and
-derivation—rather than inventing a linear state machine. Access requires either
-normal note-read authority or administrative authority for facts that cannot be
-safely correlated to an author. Typed relation targets use the declared
+Lifecycle output reports independent stored, indexed, logical-delivery,
+acknowledgement, and linked-reference facts rather than inventing a linear
+state machine. Non-administrative callers require `memory.read` and must be the
+note author or a logical-delivery recipient; `memory.admin` authorizes the
+administrative projection. Typed relation targets use the declared
 `agent`, `note`, `project`, `task`, `event`, and `artifact` namespaces. Unknown
 types and invalid bodies return bounded machine-readable details without raw
 exception text or local paths.
