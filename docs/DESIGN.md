@@ -27,6 +27,16 @@ Feedback: open a GitHub issue, ideally one that starts with *"this breaks when�
 > at the API boundary. See
 > [MEMORY_V2_COMPATIBILITY.md](MEMORY_V2_COMPATIBILITY.md) for the executable
 > compatibility and rollback boundary.
+>
+> **Coordination graph roadmap amendment (2026-07-31):** the current product has
+> a knowledge-graph memory view and durable coordination facts, but no
+> first-class coordination trace, executable workflow graph, plan executor, or
+> orchestration plane. The selective
+> [coordination graph roadmap](COORDINATION_GRAPH_ROADMAP.md) starts with
+> authorized lineage and observation, then side-effect-free validation. Any
+> bounded execution surface remains conditional on evidence and must preserve
+> peer autonomy, the adapter boundary, opt-in behavior, and one authoritative
+> task lifecycle.
 
 ## 1. Vision
 
@@ -388,6 +398,7 @@ concurrent connections.
 | **Artifact text derivation** | ✅ Implemented (opt-in) | Bounded PDF text and optional Tesseract OCR become untrusted derived notes; current source ACL and checksum backlinks are enforced. Captioning and transcripts remain future providers. |
 | **Operational controls** | 🧪 Implemented; workload validation in progress | Authoritative backup/clean restore, recoverable retention, payload-free diagnostics, and Qdrant migration are implemented. General garbage collection remains absent; supported workload language waits for package/rollback and 24-hour soak evidence. |
 | **Hub federation** | 🗺 Planned | Namespaced hub-to-hub memory exchange with explicit same-operator trust and isolation evidence. |
+| **Coordination graph extension** | 🗺 Planned | Authorized task lineage and causal traces first; side-effect-free plan validation second. Bounded execution is conditional, and no graph scheduler or orchestration runtime is implemented. See the [staged roadmap](COORDINATION_GRAPH_ROADMAP.md). |
 | **Coordination hardening** | Mixed | A2A Part-model validation and restart-safe chunked artifacts are implemented; SSE streaming, the complete A2A 1.0 binding, push notifications, and broader negotiation remain planned. |
 
 The implemented durable-memory and offline-sharing foundation adds only PyYAML
@@ -413,6 +424,10 @@ retains keyword fallback when the vector provider is unavailable.
   fleets; the ephemeral complement to this durable layer.
 - [A2A protocol](https://github.com/a2aproject/A2A) — the coordination substrate
   and the extension mechanism this design rides on.
+- LangChain, ["3 Years of Graph Engineering with LangGraph"](https://www.langchain.com/blog/3-years-of-graph-engineering-with-langgraph)
+  — useful distinction between deterministic graph paths and agentic steps. The
+  Superhub roadmap applies that idea only at the cross-agent coordination
+  boundary; it does not claim a LangGraph-compatible workflow runtime.
 
 ## 13. Open questions (please attack these)
 
@@ -422,3 +437,6 @@ retains keyword fallback when the vector provider is unavailable.
 4. Is a 10-tool MCP surface too small for real adapter authors?
 5. Federation trust model: is `originHub` provenance sufficient against a
    malicious peer hub, or does v1 federation need signed notes?
+6. Do heterogeneous runtime pilots show enough repeated fan-out/fan-in pain to
+   justify execution responsibility, or should the coordination graph stop at
+   trace and validation?

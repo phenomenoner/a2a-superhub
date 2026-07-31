@@ -16,7 +16,8 @@
 **[Shared memory design and implemented surfaces](docs/DESIGN.md)** ·
 [Agent user guide](docs/AGENT_USER_GUIDE.md) ·
 [Local agent operations](docs/LOCAL_AGENT_OPERATIONS.md) · [API](docs/API.md) ·
-[Operations](docs/OPERATIONS.md) · [Adapters](docs/ADAPTERS.md) · [Security](docs/SECURITY.md)
+[Operations](docs/OPERATIONS.md) · [Adapters](docs/ADAPTERS.md) ·
+[Coordination graph roadmap](docs/COORDINATION_GRAPH_ROADMAP.md) · [Security](docs/SECURITY.md)
 
 ---
 
@@ -248,6 +249,19 @@ SDK, artifact transport/derivation, and cross-transport evidence. It does not
 mean complete A2A 1.0 parity, production deployment, operational soak, audio
 transcription, or image captioning.
 
+## Graph engineering, at the right boundary
+
+Workflow graph frameworks engineer paths inside an agentic system. Superhub's
+job is different: engineer durable, authorized relationships between independent
+agent systems. The project is **not** repositioning itself as a general-purpose
+workflow graph runtime.
+
+The selective [coordination graph roadmap](docs/COORDINATION_GRAPH_ROADMAP.md)
+starts with authorized task lineage and causal traces, then side-effect-free plan
+validation. Bounded fan-out/fan-in and execution policies remain conditional on
+evidence; dynamic graphs and peer-internal harness control remain out of the
+current product scope.
+
 ## Roadmap
 
 - **Contract and security baseline — 🧱 Foundation:** executable identity,
@@ -274,11 +288,16 @@ transcription, or image captioning.
   workload claim waits for the published package/rollback and 24-hour soak evidence.
 - **Hub federation — 🗺 Planned:** namespaced, explicitly trusted hub-to-hub
   memory exchange.
+- **Coordination graph extension — 🗺 Planned:** authorized task lineage and
+  causal traces first, followed by side-effect-free plan validation. A bounded
+  executor is conditional, not committed; no orchestration runtime exists today.
+  See the [staged decision and evidence gates](docs/COORDINATION_GRAPH_ROADMAP.md).
 - **Coordination hardening — mixed:** A2A Part-model validation and chunked
   artifact upload are implemented; SSE streaming, the complete A2A 1.0 binding,
   and push notifications remain planned.
 
-Details and acceptance criteria in the [RFC](docs/DESIGN.md).
+Details and acceptance criteria are in the [shared-memory RFC](docs/DESIGN.md)
+and the [coordination graph roadmap](docs/COORDINATION_GRAPH_ROADMAP.md).
 
 ## Status & contributing
 
